@@ -1,11 +1,11 @@
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
 import { createMemoryMcpProvider } from '@cindy/mcps/memory';
 import { ClaudeCodeAgent, Maker, MakerMemoryManager, isTerminalTurnEvent, type AgentEvent, type AgentRuntimeConfig, type AuthAdapter, type Logger, type SessionMeta, type SessionStorage } from '@cindy/maker-core';
 import type { ResolvedProfile } from './profile.js';
 import { readProjectContext } from './project-context.js';
+import { openHeadlessSqlite } from './sqlite.js';
 import { createUsageArtifact, type NormalizedUsage } from './usage.js';
 
 class MemorySessionStorage implements SessionStorage {
@@ -34,7 +34,7 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string): { mak
   const makerMemory = new MakerMemoryManager({
     basePath: stateDir,
     sqliteFactory: (filePath) => {
-      const db = new Database(filePath);
+      const db = openHeadlessSqlite(filePath);
       db.pragma('journal_mode = WAL');
       db.pragma('busy_timeout = 5000');
       return db;

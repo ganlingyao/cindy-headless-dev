@@ -12,8 +12,7 @@
   },
   "dependencies": {
     "@cindy/maker-core": "workspace:*",
-    "@cindy/mcps": "workspace:*",
-    "better-sqlite3": "^12.9.0"
+    "@cindy/mcps": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -53,9 +53,6 @@ importers:
       '@cindy/mcps':
         specifier: workspace:*
         version: link:../../packages/lizi-mcps
-      better-sqlite3:
-        specifier: ^12.9.0
-        version: 12.11.1
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

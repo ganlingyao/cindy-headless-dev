@@ -25,6 +25,8 @@ Electron-only product services.
 `AgentRuntimeConfig` semantics in Maker Core. A production run can persist
 Maker Memory across sessions by setting `CINDY_HEADLESS_STATE_DIR` to a stable
 directory. Without that variable, state is scoped to the run output directory.
+Headless uses Node 22's built-in SQLite host adapter for Cindy's existing
+Maker Memory store and FTS logic, avoiding an Electron/native-addon dependency.
 
 When `projectContext` is enabled, Headless reads only:
 
