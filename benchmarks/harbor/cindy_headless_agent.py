@@ -46,8 +46,11 @@ class CindyHeadlessAgent(BaseAgent):
         await environment.upload_dir(self.bundle_dir, "/opt/cindy-headless")
         await environment.upload_dir(self.profile_path.parent, "/opt/cindy-headless/profile")
         container_profile = f"/opt/cindy-headless/profile/{self.profile_path.name}"
+        profile = json.loads(self.profile_path.read_text(encoding="utf-8"))
+        backend = profile.get("agentBackend", "claude-code")
+        binary = "codex" if backend == "codex" else "claude"
         result = await environment.exec(
-            "set -e; chmod +x /opt/cindy-headless/bin/claude; "
+            f"set -e; chmod +x /opt/cindy-headless/bin/{binary}; "
             "node /opt/cindy-headless/dist/cli.cjs doctor "
             f"--profile {container_profile} --output-dir /logs/agent",
             env=self.extra_env,
