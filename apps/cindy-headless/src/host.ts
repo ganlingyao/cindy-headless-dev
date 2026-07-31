@@ -115,16 +115,17 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   } finally {
     if (timer) clearTimeout(timer);
   }
+  // Claude may emit the final `done` event while closing the SDK session. Flush
+  // it before extracting provider usage so Harbor receives real token counts.
+  try { await session?.close(); } catch { /* artifact writing must still run */ }
   const usage = session?.getUsageSnapshot() ?? { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
   const providerUsage = extractProviderUsage(events);
   const identity = { schemaVersion: 1, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, requestedModelId: profile.model.requestedId, provider: profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
   const status = classifyFailure(error, terminalError, deadlineKilled);
   const result = { schemaVersion: 1, status, sessionId: session?.id ?? null, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length };
-  try { if (session) await session.close(); } finally {
-    try { makerMemory?.dispose(); } catch { /* best effort cleanup */ }
-    for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
-    await rm(cleanHome, { recursive: true, force: true });
-  }
+  try { makerMemory?.dispose(); } catch { /* best effort cleanup */ }
+  for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
+  await rm(cleanHome, { recursive: true, force: true });
   await Promise.all([
     writeFile(path.join(absoluteOutputDir, 'identity.json'), JSON.stringify(identity, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
