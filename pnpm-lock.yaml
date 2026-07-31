@@ -50,13 +50,19 @@ importers:
       '@cindy/maker-core':
         specifier: workspace:*
         version: link:../../packages/maker-core
+      '@cindy/mcps':
+        specifier: workspace:*
+        version: link:../../packages/lizi-mcps
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.11.1
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
       esbuild:
-        specifier: ^0.25.0
-        version: 0.25.12
+        specifier: ^0.28.1
+        version: 0.28.1
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -13744,7 +13750,9 @@ snapshots:
       metro-runtime: 0.84.4
     transitivePeerDependencies:
       - '@babel/core'
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-colors@0.74.89': {}
 

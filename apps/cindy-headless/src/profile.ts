@@ -26,9 +26,9 @@ export interface HeadlessProfile {
   permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default' | 'ask';
   systemPromptFile?: string;
   expectedSystemPromptDigest?: string;
-  makerMemory: false;
-  nativeMemory: false;
-  projectContext: false;
+  makerMemory: boolean;
+  nativeMemory: boolean;
+  projectContext: boolean;
   containerSandbox?: boolean;
   compaction?: { enabled: boolean; thresholdPct?: number };
   throughputCap?: { outputTokensPerSecond: number; enforcement: 'external-proxy' };
@@ -48,9 +48,9 @@ export interface ProfileCapabilities {
   agentBackend: 'claude-code';
   supportedModelIds: string[];
   supportedPermissionModes: string[];
-  projectContext: false;
-  makerMemory: false;
-  nativeMemory: false;
+  projectContext: boolean;
+  makerMemory: boolean;
+  nativeMemory: boolean;
   artifactContract: string[];
 }
 
@@ -74,7 +74,8 @@ export function validateProfile(profile: unknown): HeadlessProfile {
   nonEmptyString(value.model.requestedId, 'model.requestedId');
   if (!value.supportedModelIds.includes(value.model.requestedId)) throw new Error(`model ${value.model.requestedId} is not supported by this profile`);
   if (!['bypassPermissions', 'acceptEdits', 'default', 'ask'].includes(value.permissionMode ?? '')) throw new Error('unsupported permissionMode');
-  if (value.makerMemory !== false || value.nativeMemory !== false || value.projectContext !== false) throw new Error('Phase 0 requires makerMemory, nativeMemory and projectContext to be false');
+  if (typeof value.makerMemory !== 'boolean' || typeof value.nativeMemory !== 'boolean' || typeof value.projectContext !== 'boolean') throw new Error('makerMemory, nativeMemory and projectContext must be boolean');
+  if (value.makerMemory && value.nativeMemory) throw new Error('makerMemory and nativeMemory are mutually exclusive');
   if (value.containerSandbox !== undefined && typeof value.containerSandbox !== 'boolean') throw new Error('containerSandbox must be boolean');
   if (value.parentProfile && (!value.changedDimensions || value.changedDimensions.length === 0)) throw new Error('derived profiles require changedDimensions');
   if (!value.parentProfile && value.changedDimensions?.length) throw new Error('changedDimensions requires parentProfile');
@@ -130,5 +131,5 @@ export async function doctor(resolved: ResolvedProfile, outputDir?: string): Pro
 }
 
 export function capabilities(profile: HeadlessProfile): ProfileCapabilities {
-  return { schemaVersion: 1, profileId: profile.id, agentBackend: profile.agentBackend, supportedModelIds: [...profile.supportedModelIds], supportedPermissionModes: ['bypassPermissions', 'acceptEdits', 'default', 'ask'], projectContext: false, makerMemory: false, nativeMemory: false, artifactContract: ['identity.json', 'config.json', 'trace.jsonl', 'stderr.log', 'usage.json', 'result.json'] };
+  return { schemaVersion: 1, profileId: profile.id, agentBackend: profile.agentBackend, supportedModelIds: [...profile.supportedModelIds], supportedPermissionModes: ['bypassPermissions', 'acceptEdits', 'default', 'ask'], projectContext: profile.projectContext, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory, artifactContract: ['identity.json', 'config.json', 'trace.jsonl', 'stderr.log', 'usage.json', 'result.json'] };
 }

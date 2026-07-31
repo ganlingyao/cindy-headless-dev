@@ -16,7 +16,7 @@
 import { buildMemoryScopeKey, type MakerMemoryStore } from '@cindy/maker-core';
 
 import type { MemoryToolResult } from '../cindy_memoryToolRegistry.js';
-import type { MemoryMcpDeps } from '../types.js';
+import type { MemoryMcpDeps } from '../memory-types.js';
 import { classifyMemoryError } from './errors.js';
 
 export function buildJsonResult(payload: unknown, isError = false): MemoryToolResult {

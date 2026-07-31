@@ -12,9 +12,9 @@
   },
   "permissionMode": "bypassPermissions",
   "systemPromptFile": "prompt.md",
-  "makerMemory": false,
+  "makerMemory": true,
   "nativeMemory": false,
-  "projectContext": false,
+  "projectContext": true,
   "compaction": {
     "enabled": true,
     "thresholdPct": 80

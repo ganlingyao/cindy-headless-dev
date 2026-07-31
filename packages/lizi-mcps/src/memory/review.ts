@@ -11,7 +11,7 @@
 
 import { withStore } from './_shared.js';
 import { buildJsonResult } from './_shared.js';
-import type { MemoryMcpDeps } from '../types.js';
+import type { MemoryMcpDeps } from '../memory-types.js';
 import type { MemoryToolRegistry } from '../cindy_memoryToolRegistry.js';
 import { classifyMemoryError } from './errors.js';
 

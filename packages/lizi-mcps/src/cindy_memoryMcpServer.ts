@@ -35,7 +35,7 @@ import {
   registerMemoryWriteTool,
   registerSessionSearchTool,
 } from './memory/index.js';
-import type { MemoryMcpDeps } from './types.js';
+import type { MemoryMcpDeps } from './memory-types.js';
 
 // ── Entry-tool descriptions (内嵌, 跟 scheduler 同模式) ─────────────────────
 

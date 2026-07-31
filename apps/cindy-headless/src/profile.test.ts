@@ -12,6 +12,8 @@ describe('headless profile', () => {
     expect(() => validateProfile({ ...profile, supportedModelIds: ['latest'], model: { ...profile.model, requestedId: 'latest' } })).toThrow(/exact/);
   });
   it('requires single-variable metadata for derived profiles', () => expect(() => validateProfile({ ...profile, parentProfile: 'base' })).toThrow(/changedDimensions/));
+  it('keeps Cindy Maker Memory mutually exclusive with native Agent memory', () => expect(() => validateProfile({ ...profile, makerMemory: true, nativeMemory: true })).toThrow(/mutually exclusive/));
+  it('reports the original Cindy harness switches in capabilities', () => expect(capabilities(validateProfile({ ...profile, makerMemory: true, projectContext: true }))).toMatchObject({ makerMemory: true, nativeMemory: false, projectContext: true }));
   it('returns stable capabilities and canonical digest', () => {
     const valid = validateProfile(profile);
     expect(capabilities(valid).artifactContract).toContain('identity.json');

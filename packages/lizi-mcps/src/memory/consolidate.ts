@@ -11,7 +11,7 @@
 import { z } from 'zod';
 
 import { withStore } from './_shared.js';
-import type { MemoryMcpDeps } from '../types.js';
+import type { MemoryMcpDeps } from '../memory-types.js';
 import type { MemoryToolRegistry } from '../cindy_memoryToolRegistry.js';
 
 export function registerMemoryConsolidateTool(registry: MemoryToolRegistry, deps: MemoryMcpDeps): void {

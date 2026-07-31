@@ -1,8 +1,11 @@
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ClaudeCodeAgent, Maker, isTerminalTurnEvent, type AgentEvent, type AgentRuntimeConfig, type AuthAdapter, type Logger, type SessionMeta, type SessionStorage } from '@cindy/maker-core';
+import Database from 'better-sqlite3';
+import { createMemoryMcpProvider } from '@cindy/mcps/memory';
+import { ClaudeCodeAgent, Maker, MakerMemoryManager, isTerminalTurnEvent, type AgentEvent, type AgentRuntimeConfig, type AuthAdapter, type Logger, type SessionMeta, type SessionStorage } from '@cindy/maker-core';
 import type { ResolvedProfile } from './profile.js';
+import { readProjectContext } from './project-context.js';
 import { createUsageArtifact, type NormalizedUsage } from './usage.js';
 
 class MemorySessionStorage implements SessionStorage {
@@ -25,11 +28,27 @@ function jsonLogger(): Logger {
   return result;
 }
 
-function createHeadlessMaker(resolved: ResolvedProfile): Maker {
+function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string): { maker: Maker; makerMemory: MakerMemoryManager } {
   const profile = resolved.profile;
-  const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, memoryEnabled: false, makerMemoryEnabled: false, behaviorFlags: profile.containerSandbox ? { IS_SANDBOX: '1' } : undefined, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
-  const agent = new ClaudeCodeAgent({ auth: envAuth(), runtimeConfig, binaryPath: profile.agentBinaryPath, logger: jsonLogger() });
-  return new Maker({ agents: { 'claude-code': agent }, storage: new MemorySessionStorage(), logger: jsonLogger() });
+  const logger = jsonLogger();
+  const makerMemory = new MakerMemoryManager({
+    basePath: stateDir,
+    sqliteFactory: (filePath) => {
+      const db = new Database(filePath);
+      db.pragma('journal_mode = WAL');
+      db.pragma('busy_timeout = 5000');
+      return db;
+    },
+    agents: {},
+    logger: logger.child('maker-memory'),
+    initialEnabled: profile.makerMemory,
+    reviewAgent: 'claude-code',
+  });
+  const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, userDataPath: stateDir, memoryEnabled: profile.nativeMemory, makerMemoryEnabled: profile.makerMemory, behaviorFlags: profile.containerSandbox ? { IS_SANDBOX: '1' } : undefined, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
+  const memoryProviders = [createMemoryMcpProvider({ getManager: () => makerMemory, logger: logger.child('cindy-memory-mcp') })];
+  const agent = new ClaudeCodeAgent({ auth: envAuth(), runtimeConfig, binaryPath: profile.agentBinaryPath, logger, mcpProviders: memoryProviders, makerMemory });
+  makerMemory.setAgents({ 'claude-code': agent });
+  return { maker: new Maker({ agents: { 'claude-code': agent }, storage: new MemorySessionStorage(), logger, makerMemory }), makerMemory };
 }
 
 export function classifyFailure(error: string | undefined, terminalError: AgentEvent | undefined, deadlineKilled: boolean): string {
@@ -71,14 +90,19 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   process.env.CLAUDE_CONFIG_DIR = path.join(cleanHome, '.claude');
   const events: AgentEvent[] = [];
   let session: Awaited<ReturnType<Maker['createSession']>> | undefined;
+  let makerMemory: MakerMemoryManager | undefined;
   const startedAt = Date.now();
   let error: string | undefined;
   let deadlineKilled = false;
   let terminalError: AgentEvent | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const projectContext = await readProjectContext(absoluteWorkingDir, profile.projectContext);
+  const stateDir = path.resolve(process.env.CINDY_HEADLESS_STATE_DIR ?? path.join(absoluteOutputDir, 'state'));
   try {
-    const maker = createHeadlessMaker(resolved);
-    session = await maker.createSession({ agentKind: 'claude-code', workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, permissionMode: profile.permissionMode, makerMemoryEnabled: false, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
+    await mkdir(stateDir, { recursive: true });
+    const runtime = createHeadlessMaker(resolved, stateDir);
+    makerMemory = runtime.makerMemory;
+    session = await runtime.maker.createSession({ agentKind: 'claude-code', workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
     let resolveTerminal!: () => void;
     const terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
     session.onEvent((event) => { events.push(event); if (event.type === 'error' && isTerminalTurnEvent(event)) terminalError = event; if (isTerminalTurnEvent(event)) resolveTerminal(); });
@@ -93,16 +117,17 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   }
   const usage = session?.getUsageSnapshot() ?? { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
   const providerUsage = extractProviderUsage(events);
-  const identity = { schemaVersion: 1, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, requestedModelId: profile.model.requestedId, provider: profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: false, makerMemory: false, nativeMemory: false };
+  const identity = { schemaVersion: 1, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, requestedModelId: profile.model.requestedId, provider: profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
   const status = classifyFailure(error, terminalError, deadlineKilled);
   const result = { schemaVersion: 1, status, sessionId: session?.id ?? null, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length };
   try { if (session) await session.close(); } finally {
+    try { makerMemory?.dispose(); } catch { /* best effort cleanup */ }
     for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
     await rm(cleanHome, { recursive: true, force: true });
   }
   await Promise.all([
     writeFile(path.join(absoluteOutputDir, 'identity.json'), JSON.stringify(identity, null, 2) + '\n', 'utf8'),
-    writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, timeoutMs }, null, 2) + '\n', 'utf8'),
+    writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'trace.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''), 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage }), null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8'),
