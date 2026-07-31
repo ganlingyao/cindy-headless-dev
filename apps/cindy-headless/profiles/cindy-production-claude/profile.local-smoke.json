@@ -1,0 +1,22 @@
+{
+  "id": "cindy-production-claude-local-smoke",
+  "version": 1,
+  "agentBackend": "claude-code",
+  "agentBinaryPath": "D:/Work/cindy-headless-issue-127/apps/claude-code-bin/win32-x64/claude.exe",
+  "agentBinaryVersion": "2.1.219",
+  "supportedModelIds": ["claude-sonnet-4-6"],
+  "model": {
+    "provider": "anthropic",
+    "requestedId": "claude-sonnet-4-6",
+    "routeId": "configured-proxy"
+  },
+  "permissionMode": "bypassPermissions",
+  "systemPromptFile": "prompt.md",
+  "makerMemory": false,
+  "nativeMemory": false,
+  "projectContext": false,
+  "compaction": {
+    "enabled": true,
+    "thresholdPct": 80
+  }
+}

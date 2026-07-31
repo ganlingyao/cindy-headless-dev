@@ -1,0 +1,22 @@
+{
+  "name": "cindy-headless",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "cindy-headless": "dist/cli.cjs" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "bundle:linux": "node scripts/build-linux-bundle.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cindy/maker-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  }
+}

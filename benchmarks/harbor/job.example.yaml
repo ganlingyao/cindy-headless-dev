@@ -1,0 +1,23 @@
+job_name: cindy-headless-hello-world-v4
+jobs_dir: D:/Tools/Harbor/jobs/cindy-headless-hello-world
+debug: true
+n_concurrent_trials: 1
+agents:
+  - import_path: cindy_headless_agent:CindyHeadlessAgent
+    model_name: anthropic/claude-sonnet-4-6
+    kwargs:
+      bundle_dir: D:/Work/cindy-headless-issue-127/apps/cindy-headless/bundle/linux-x64
+      profile_path: D:/Work/cindy-headless-issue-127/apps/cindy-headless/profiles/cindy-production-claude/profile.example.json
+      version: 0.1.0
+    env:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
+    include_logs:
+      - identity.json
+      - config.json
+      - trace.jsonl
+      - stderr.log
+      - usage.json
+      - result.json
+tasks:
+  - path: D:/Tools/Harbor/tasks/hello-world

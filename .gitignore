@@ -62,6 +62,7 @@ tools/ripgrep/updates/
 # ── 日志 / 下载 / 本地运行态 ─────────────────────────────────
 logs/
 *.log
+tmp/
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
