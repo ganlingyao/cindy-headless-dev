@@ -2,7 +2,7 @@
 import { capabilities, doctor, readProfile } from './profile.js';
 import { runTask } from './host.js';
 import { readFile } from 'node:fs/promises';
-import { validateManifest, validateOracleGate, writePlan } from './benchmark.js';
+import { expandPairedPlan, summarizePairedResults, validateManifest, validateOracleGate, validatePairedManifest, writePlan } from './benchmark.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? 'help';
@@ -29,8 +29,19 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'plan') {
-    await writePlan(requireFlag('--manifest'), requireFlag('--output'));
+    const manifestPath = requireFlag('--manifest');
+    const outputPath = requireFlag('--output');
+    if (args.includes('--paired')) {
+      const manifest = validatePairedManifest(validateManifest(JSON.parse(await readFile(manifestPath, 'utf8'))));
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(outputPath, JSON.stringify(expandPairedPlan(manifest), null, 2) + '\n', 'utf8');
+    } else await writePlan(manifestPath, outputPath);
     console.log(JSON.stringify({ ok: true, output: requireFlag('--output') }));
+    return;
+  }
+  if (command === 'paired-summary') {
+    const results = JSON.parse(await readFile(requireFlag('--results'), 'utf8'));
+    console.log(JSON.stringify(summarizePairedResults(results), null, 2));
     return;
   }
   if (command === 'oracle-gate') {
@@ -39,7 +50,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(validateOracleGate(manifest.dataset.taskIds, results), null, 2));
     return;
   }
-  console.error('cindy-headless commands: version, doctor, profile validate, capabilities, run, plan, oracle-gate');
+  console.error('cindy-headless commands: version, doctor, profile validate, capabilities, run, plan [--paired], paired-summary, oracle-gate');
   process.exitCode = 2;
 }
 
