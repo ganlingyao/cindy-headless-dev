@@ -78,7 +78,7 @@ export function extractProviderUsage(events: AgentEvent[]): { rawProviderUsage: 
   };
 }
 
-export async function runTask(resolved: ResolvedProfile, task: string, workingDir: string, outputDir: string, timeoutMs: number): Promise<Record<string, unknown>> {
+export async function runTask(resolved: ResolvedProfile, task: string, workingDir: string, outputDir: string, timeoutMs: number, turns: string[] = [task]): Promise<Record<string, unknown>> {
   const profile = resolved.profile;
   const absoluteOutputDir = path.resolve(outputDir);
   const absoluteWorkingDir = path.resolve(workingDir);
@@ -103,11 +103,15 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
     const runtime = createHeadlessMaker(resolved, stateDir);
     makerMemory = runtime.makerMemory;
     session = await runtime.maker.createSession({ agentKind: 'claude-code', workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
-    let resolveTerminal!: () => void;
-    const terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
-    session.onEvent((event) => { events.push(event); if (event.type === 'error' && isTerminalTurnEvent(event)) terminalError = event; if (isTerminalTurnEvent(event)) resolveTerminal(); });
-    await session.send(task);
-    await Promise.race([terminal, new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('HEADLESS_DEADLINE_EXCEEDED')), timeoutMs); })]);
+    let resolveTerminal: (() => void) | undefined;
+    let terminal = Promise.resolve();
+    session.onEvent((event) => { events.push(event); if (event.type === 'error' && isTerminalTurnEvent(event)) terminalError = event; if (isTerminalTurnEvent(event)) resolveTerminal?.(); });
+    for (const turn of turns.length > 0 ? turns : [task]) {
+      terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
+      await session.send(turn);
+      await Promise.race([terminal, new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('HEADLESS_DEADLINE_EXCEEDED')), timeoutMs); })]);
+      if (timer) { clearTimeout(timer); timer = undefined; }
+    }
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
     deadlineKilled = error === 'HEADLESS_DEADLINE_EXCEEDED';
@@ -122,7 +126,7 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   const providerUsage = extractProviderUsage(events);
   const identity = { schemaVersion: 1, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, requestedModelId: profile.model.requestedId, provider: profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
   const status = classifyFailure(error, terminalError, deadlineKilled);
-  const result = { schemaVersion: 1, status, sessionId: session?.id ?? null, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length };
+  const result = { schemaVersion: 1, status, sessionId: session?.id ?? null, turnsCount: turns.length > 0 ? turns.length : 1, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length };
   try { makerMemory?.dispose(); } catch { /* best effort cleanup */ }
   for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
   await rm(cleanHome, { recursive: true, force: true });

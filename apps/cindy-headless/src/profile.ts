@@ -23,7 +23,7 @@ export interface HeadlessProfile {
     thinkingBudget?: number | string;
   };
   endpoint?: string;
-  permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default' | 'ask';
+  permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default' | 'ask' | 'plan';
   systemPromptFile?: string;
   expectedSystemPromptDigest?: string;
   makerMemory: boolean;
@@ -73,7 +73,7 @@ export function validateProfile(profile: unknown): HeadlessProfile {
   nonEmptyString(value.model.provider, 'model.provider');
   nonEmptyString(value.model.requestedId, 'model.requestedId');
   if (!value.supportedModelIds.includes(value.model.requestedId)) throw new Error(`model ${value.model.requestedId} is not supported by this profile`);
-  if (!['bypassPermissions', 'acceptEdits', 'default', 'ask'].includes(value.permissionMode ?? '')) throw new Error('unsupported permissionMode');
+  if (!['bypassPermissions', 'acceptEdits', 'default', 'ask', 'plan'].includes(value.permissionMode ?? '')) throw new Error('unsupported permissionMode');
   if (typeof value.makerMemory !== 'boolean' || typeof value.nativeMemory !== 'boolean' || typeof value.projectContext !== 'boolean') throw new Error('makerMemory, nativeMemory and projectContext must be boolean');
   if (value.makerMemory && value.nativeMemory) throw new Error('makerMemory and nativeMemory are mutually exclusive');
   if (value.containerSandbox !== undefined && typeof value.containerSandbox !== 'boolean') throw new Error('containerSandbox must be boolean');
@@ -131,5 +131,5 @@ export async function doctor(resolved: ResolvedProfile, outputDir?: string): Pro
 }
 
 export function capabilities(profile: HeadlessProfile): ProfileCapabilities {
-  return { schemaVersion: 1, profileId: profile.id, agentBackend: profile.agentBackend, supportedModelIds: [...profile.supportedModelIds], supportedPermissionModes: ['bypassPermissions', 'acceptEdits', 'default', 'ask'], projectContext: profile.projectContext, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory, artifactContract: ['identity.json', 'config.json', 'trace.jsonl', 'stderr.log', 'usage.json', 'result.json'] };
+  return { schemaVersion: 1, profileId: profile.id, agentBackend: profile.agentBackend, supportedModelIds: [...profile.supportedModelIds], supportedPermissionModes: ['bypassPermissions', 'acceptEdits', 'default', 'ask', 'plan'], projectContext: profile.projectContext, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory, artifactContract: ['identity.json', 'config.json', 'trace.jsonl', 'stderr.log', 'usage.json', 'result.json'] };
 }

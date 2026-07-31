@@ -22,9 +22,12 @@ async function main(): Promise<void> {
   if (command === 'run') {
     const task = flag('--task') ?? process.env.CINDY_HEADLESS_TASK ?? '';
     if (!task) throw new Error('--task or CINDY_HEADLESS_TASK is required');
+    const turnsFile = flag('--turns-file');
+    const turns = turnsFile ? JSON.parse(await readFile(turnsFile, 'utf8')) : [task];
+    if (!Array.isArray(turns) || turns.some((turn) => typeof turn !== 'string' || turn.trim() === '')) throw new Error('--turns-file must contain a non-empty string array');
     const timeoutMs = Number(flag('--timeout-ms') ?? '900000');
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('--timeout-ms must be a positive number');
-    const result = await runTask(await readProfile(requireFlag('--profile')), task, flag('--working-dir') ?? process.cwd(), flag('--output-dir') ?? './results', timeoutMs);
+    const result = await runTask(await readProfile(requireFlag('--profile')), task, flag('--working-dir') ?? process.cwd(), flag('--output-dir') ?? './results', timeoutMs, turns);
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -50,7 +53,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(validateOracleGate(manifest.dataset.taskIds, results), null, 2));
     return;
   }
-  console.error('cindy-headless commands: version, doctor, profile validate, capabilities, run, plan [--paired], paired-summary, oracle-gate');
+  console.error('cindy-headless commands: version, doctor, profile validate, capabilities, run [--turns-file], plan [--paired], paired-summary, oracle-gate');
   process.exitCode = 2;
 }
 

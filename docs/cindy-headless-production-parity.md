@@ -35,6 +35,25 @@ When `projectContext` is enabled, Headless reads only:
 Missing or empty project knowledge is non-fatal and is recorded in
 `config.json` and `identity.json`.
 
+## Session Contract
+
+The default `run --task` path is one turn. Cindy-native multi-turn behavior is
+available with a JSON array:
+
+```text
+cindy-headless run --profile profile.json --task "first turn" --turns-file turns.json
+```
+
+Each string in `turns.json` is sent to the same Maker session in order. The
+result records `turnsCount`; trace and usage remain session-scoped.
+
+The repository includes two derived profiles for parity checks:
+
+- `profiles/cindy-native-memory/profile.example.json`: native Agent memory on,
+  Maker Memory off.
+- `profiles/cindy-planning/profile.example.json`: Cindy planning permission
+  mode with the production memory/context settings.
+
 ## Harbor Boundary
 
 Harbor supplies the task container, working directory, verifier and resource
