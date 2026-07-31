@@ -51,6 +51,10 @@ export interface ProfileCapabilities {
   projectContext: boolean;
   makerMemory: boolean;
   nativeMemory: boolean;
+  nativeToolSurface: 'claude-code-default';
+  cindyMcpProviders: string[];
+  desktopOnlyProviders: string[];
+  multiTurnSession: true;
   artifactContract: string[];
 }
 
@@ -131,5 +135,5 @@ export async function doctor(resolved: ResolvedProfile, outputDir?: string): Pro
 }
 
 export function capabilities(profile: HeadlessProfile): ProfileCapabilities {
-  return { schemaVersion: 1, profileId: profile.id, agentBackend: profile.agentBackend, supportedModelIds: [...profile.supportedModelIds], supportedPermissionModes: ['bypassPermissions', 'acceptEdits', 'default', 'ask', 'plan'], projectContext: profile.projectContext, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory, artifactContract: ['identity.json', 'config.json', 'trace.jsonl', 'stderr.log', 'usage.json', 'result.json'] };
+  return { schemaVersion: 1, profileId: profile.id, agentBackend: profile.agentBackend, supportedModelIds: [...profile.supportedModelIds], supportedPermissionModes: ['bypassPermissions', 'acceptEdits', 'default', 'ask', 'plan'], projectContext: profile.projectContext, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory, nativeToolSurface: 'claude-code-default', cindyMcpProviders: profile.makerMemory ? ['cindy_memory'] : [], desktopOnlyProviders: [], multiTurnSession: true, artifactContract: ['identity.json', 'config.json', 'trace.jsonl', 'stderr.log', 'usage.json', 'result.json'] };
 }

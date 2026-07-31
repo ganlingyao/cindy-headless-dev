@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "cindyCommit": "a86d566d7052f6184916c4e0227b65404ecd9c2b",
+  "cindyCommit": "dafefb23f3bf17e85313a2bc2b46b38c3dd96a90",
   "lockfileDigest": "a60a242c7c79854646605119c75385c8d7a826c69995a0a2eda70fab6a304c1c",
   "systemPromptDigest": "17fc96a52444260aa44b85c0de216b5e29086a4e86202d8840f8dc1ba9391221",
   "claudeBinaryDigest": "22cfd6f5b3061c0391ba84e9cf8c9deaa37783aac18b004d42ec061e98f00691",
   "claudeCodeVersion": "2.1.219",
   "platform": "linux-x64",
-  "generatedAt": "2026-07-31T08:14:33.567Z"
+  "generatedAt": "2026-07-31T08:19:16.364Z"
 }
