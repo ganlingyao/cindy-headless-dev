@@ -11,7 +11,7 @@ export interface HeadlessProfile {
   version: 1;
   parentProfile?: string;
   changedDimensions?: string[];
-  agentBackend: 'claude-code';
+  agentBackend: 'claude-code' | 'codex';
   agentBinaryPath: string;
   agentBinaryVersion: string;
   supportedModelIds: string[];
@@ -23,7 +23,7 @@ export interface HeadlessProfile {
     thinkingBudget?: number | string;
   };
   endpoint?: string;
-  permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default' | 'ask' | 'plan';
+  permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default' | 'ask' | 'auto' | 'plan';
   systemPromptFile?: string;
   expectedSystemPromptDigest?: string;
   makerMemory: boolean;
@@ -45,13 +45,13 @@ export interface ResolvedProfile {
 export interface ProfileCapabilities {
   schemaVersion: 1;
   profileId: string;
-  agentBackend: 'claude-code';
+  agentBackend: 'claude-code' | 'codex';
   supportedModelIds: string[];
   supportedPermissionModes: string[];
   projectContext: boolean;
   makerMemory: boolean;
   nativeMemory: boolean;
-  nativeToolSurface: 'claude-code-default';
+  nativeToolSurface: 'claude-code-default' | 'codex-app-server-default';
   cindyMcpProviders: string[];
   desktopOnlyProviders: string[];
   multiTurnSession: true;
@@ -69,7 +69,7 @@ export function validateProfile(profile: unknown): HeadlessProfile {
   nonEmptyString(value.agentBinaryPath, 'agentBinaryPath');
   nonEmptyString(value.agentBinaryVersion, 'agentBinaryVersion');
   if (value.version !== 1) throw new Error('profile.version must be 1');
-  if (value.agentBackend !== 'claude-code') throw new Error('only claude-code backend is supported in Phase 0');
+  if (value.agentBackend !== 'claude-code' && value.agentBackend !== 'codex') throw new Error('agentBackend must be claude-code or codex');
   if (!Array.isArray(value.supportedModelIds) || value.supportedModelIds.length === 0) throw new Error('supportedModelIds must be non-empty');
   if (value.supportedModelIds.some((id) => typeof id !== 'string' || id.trim() === '' || id === '*' || id === 'latest')) throw new Error('supportedModelIds must contain exact non-empty model IDs');
   if (new Set(value.supportedModelIds).size !== value.supportedModelIds.length) throw new Error('supportedModelIds must not contain duplicates');
@@ -77,7 +77,9 @@ export function validateProfile(profile: unknown): HeadlessProfile {
   nonEmptyString(value.model.provider, 'model.provider');
   nonEmptyString(value.model.requestedId, 'model.requestedId');
   if (!value.supportedModelIds.includes(value.model.requestedId)) throw new Error(`model ${value.model.requestedId} is not supported by this profile`);
-  if (!['bypassPermissions', 'acceptEdits', 'default', 'ask', 'plan'].includes(value.permissionMode ?? '')) throw new Error('unsupported permissionMode');
+  if (!['bypassPermissions', 'acceptEdits', 'default', 'ask', 'auto', 'plan'].includes(value.permissionMode ?? '')) throw new Error('unsupported permissionMode');
+  if (value.agentBackend === 'claude-code' && value.permissionMode === 'auto') throw new Error('auto permissionMode is only supported by codex');
+  if (value.agentBackend === 'codex' && (value.permissionMode === 'acceptEdits' || value.permissionMode === 'default')) throw new Error(`${value.permissionMode} permissionMode is not supported by codex`);
   if (typeof value.makerMemory !== 'boolean' || typeof value.nativeMemory !== 'boolean' || typeof value.projectContext !== 'boolean') throw new Error('makerMemory, nativeMemory and projectContext must be boolean');
   if (value.makerMemory && value.nativeMemory) throw new Error('makerMemory and nativeMemory are mutually exclusive');
   if (value.containerSandbox !== undefined && typeof value.containerSandbox !== 'boolean') throw new Error('containerSandbox must be boolean');
@@ -106,7 +108,9 @@ export function profileDigest(profile: HeadlessProfile): string {
 export async function readProfile(profilePath: string): Promise<ResolvedProfile> {
   const absolutePath = path.resolve(profilePath);
   const profile = validateProfile(JSON.parse(await readFile(absolutePath, 'utf8')));
-  const endpointOverride = process.env.CINDY_HEADLESS_BASE_URL ?? process.env.ANTHROPIC_BASE_URL;
+  const endpointOverride = profile.agentBackend === 'claude-code'
+    ? process.env.CINDY_HEADLESS_BASE_URL ?? process.env.ANTHROPIC_BASE_URL
+    : undefined;
   if (!profile.endpoint && endpointOverride) profile.endpoint = endpointOverride;
   let systemPrompt: string | undefined;
   let systemPromptDigest: string | null = null;
@@ -123,17 +127,32 @@ export async function readProfile(profilePath: string): Promise<ResolvedProfile>
 
 export async function doctor(resolved: ResolvedProfile, outputDir?: string): Promise<{ ok: true; checks: Record<string, string | boolean> }> {
   await access(resolved.profile.agentBinaryPath);
-  if (!(process.env.CINDY_HEADLESS_API_KEY ?? process.env.ANTHROPIC_API_KEY)) throw new Error('CINDY_HEADLESS_API_KEY or ANTHROPIC_API_KEY is required');
-  const versionResult = await execFileAsync(resolved.profile.agentBinaryPath, ['--version'], { timeout: 30_000 });
+  const codexHome = process.env.CINDY_HEADLESS_CODEX_HOME ?? process.env.CODEX_HOME;
+  if (resolved.profile.agentBackend === 'claude-code' && !(process.env.CINDY_HEADLESS_API_KEY ?? process.env.ANTHROPIC_API_KEY)) {
+    throw new Error('CINDY_HEADLESS_API_KEY or ANTHROPIC_API_KEY is required');
+  }
+  if (resolved.profile.agentBackend === 'codex' && !codexHome) {
+    throw new Error('CINDY_HEADLESS_CODEX_HOME or CODEX_HOME is required for codex');
+  }
+  if (codexHome) await access(path.resolve(codexHome));
+  const env = resolved.profile.agentBackend === 'codex' && codexHome
+    ? { ...process.env, CODEX_HOME: path.resolve(codexHome) }
+    : process.env;
+  const versionResult = await execFileAsync(resolved.profile.agentBinaryPath, ['--version'], { timeout: 30_000, env });
   const observedVersion = `${versionResult.stdout} ${versionResult.stderr}`.trim();
   if (!observedVersion.includes(resolved.profile.agentBinaryVersion)) throw new Error(`agent binary version mismatch: expected ${resolved.profile.agentBinaryVersion}, observed ${observedVersion}`);
+  if (resolved.profile.agentBackend === 'codex') {
+    const login = await execFileAsync(resolved.profile.agentBinaryPath, ['login', 'status'], { timeout: 30_000, env });
+    if (!`${login.stdout} ${login.stderr}`.toLowerCase().includes('logged in')) throw new Error('codex login status did not report an authenticated account');
+  }
   if (outputDir) {
     await mkdir(path.resolve(outputDir), { recursive: true });
     await access(path.resolve(outputDir));
   }
-  return { ok: true, checks: { profile: true, agentBinary: resolved.profile.agentBinaryPath, agentBinaryVersion: observedVersion, authEnvironment: true, endpointConfigured: Boolean(resolved.profile.endpoint), outputDirectory: outputDir ? path.resolve(outputDir) : 'not-requested', systemPromptDigest: resolved.systemPromptDigest ?? 'none' } };
+  return { ok: true, checks: { profile: true, agentBinary: resolved.profile.agentBinaryPath, agentBinaryVersion: observedVersion, authEnvironment: true, endpointConfigured: resolved.profile.agentBackend === 'claude-code' ? Boolean(resolved.profile.endpoint) : 'not-applicable', outputDirectory: outputDir ? path.resolve(outputDir) : 'not-requested', systemPromptDigest: resolved.systemPromptDigest ?? 'none' } };
 }
 
 export function capabilities(profile: HeadlessProfile): ProfileCapabilities {
-  return { schemaVersion: 1, profileId: profile.id, agentBackend: profile.agentBackend, supportedModelIds: [...profile.supportedModelIds], supportedPermissionModes: ['bypassPermissions', 'acceptEdits', 'default', 'ask', 'plan'], projectContext: profile.projectContext, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory, nativeToolSurface: 'claude-code-default', cindyMcpProviders: profile.makerMemory ? ['cindy_memory'] : [], desktopOnlyProviders: [], multiTurnSession: true, artifactContract: ['identity.json', 'config.json', 'trace.jsonl', 'stderr.log', 'usage.json', 'result.json'] };
+  const codex = profile.agentBackend === 'codex';
+  return { schemaVersion: 1, profileId: profile.id, agentBackend: profile.agentBackend, supportedModelIds: [...profile.supportedModelIds], supportedPermissionModes: codex ? ['bypassPermissions', 'ask', 'auto', 'plan'] : ['bypassPermissions', 'acceptEdits', 'default', 'ask', 'plan'], projectContext: profile.projectContext, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory, nativeToolSurface: codex ? 'codex-app-server-default' : 'claude-code-default', cindyMcpProviders: profile.makerMemory ? ['cindy_memory'] : [], desktopOnlyProviders: [], multiTurnSession: true, artifactContract: ['identity.json', 'config.json', 'trace.jsonl', 'stderr.log', 'usage.json', 'result.json'] };
 }

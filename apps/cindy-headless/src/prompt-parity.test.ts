@@ -10,4 +10,12 @@ describe('production prompt parity', () => {
     const composed = [desktopHost, desktopClaude].map((part) => part.trim()).filter(Boolean).join('\n\n');
     expect(headless.replace(/\r\n/g, '\n').trim()).toBe(composed.replace(/\r\n/g, '\n'));
   });
+
+  it('matches the Desktop Codex host prompt after cross-platform newline normalization', async () => {
+    const headless = await readFile(path.resolve('profiles/cindy-production-codex/prompt.md'), 'utf8');
+    const desktopHost = await readFile(path.resolve('../../apps/desktop/src/main/maker-host/host-system-prompt.md'), 'utf8');
+    const desktopCodex = await readFile(path.resolve('../../apps/desktop/src/main/maker-host/codex-system-prompt.md'), 'utf8');
+    const composed = [desktopHost, desktopCodex].map((part) => part.trim()).filter(Boolean).join('\n\n');
+    expect(headless.replace(/\r\n/g, '\n').trim()).toBe(composed.replace(/\r\n/g, '\n'));
+  });
 });

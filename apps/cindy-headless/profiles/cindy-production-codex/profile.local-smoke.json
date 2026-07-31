@@ -1,0 +1,23 @@
+{
+  "id": "cindy-production-codex-local-smoke",
+  "version": 1,
+  "agentBackend": "codex",
+  "agentBinaryPath": "D:/Work/cindy-headless-issue-127/apps/codex-bin/win32-x64/codex.exe",
+  "agentBinaryVersion": "0.145.0",
+  "supportedModelIds": ["gpt-5.4-mini"],
+  "model": {
+    "provider": "openai",
+    "requestedId": "gpt-5.4-mini",
+    "routeId": "local-authenticated-account"
+  },
+  "permissionMode": "bypassPermissions",
+  "systemPromptFile": "prompt.md",
+  "makerMemory": true,
+  "nativeMemory": false,
+  "projectContext": true,
+  "containerSandbox": false,
+  "compaction": {
+    "enabled": true,
+    "thresholdPct": 80
+  }
+}

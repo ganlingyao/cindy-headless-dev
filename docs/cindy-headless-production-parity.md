@@ -8,6 +8,7 @@ Electron-only product services.
 | --- | --- | --- |
 | Maker Core session lifecycle | `packages/maker-core/src/maker.ts`, `session.ts` | Implemented |
 | Claude Code Agent | `packages/maker-core/src/agents/claude-code` | Implemented |
+| Codex Agent | `packages/maker-core/src/agents/codex` | Implemented through the Cindy app-server transport |
 | Production system prompt | `apps/desktop/src/main/maker-host/host-system-prompt.md`, `claude-system-prompt.md` | Implemented and digest-checked |
 | Native Agent memory | `AgentRuntimeConfig.memoryEnabled` | Profile-controlled |
 | Maker Memory manager | `MakerMemoryManager` and `cindy_memory` MCP | Profile-controlled, using Cindy's existing implementation |
@@ -16,6 +17,7 @@ Electron-only product services.
 | Compaction | `AgentRuntimeConfig.autoCompactThresholdPct` | Profile-controlled |
 | Claude native tools | Claude Code SDK/CLI | Inherited from pinned Claude Code |
 | `cindy_memory` MCP | `packages/lizi-mcps/src/cindy_memoryMcpServer.ts` | Implemented through the narrow `@cindy/mcps/memory` entry |
+| Codex `cindy_memory` MCP bridge | `apps/cindy-headless/src/codex-memory-bridge.ts` | Implemented as a loopback-only, per-run bearer-authenticated Streamable HTTP bridge |
 | Desktop MCP services (IM, browser UI, computer UI, Orca, scheduler) | `apps/desktop/src/main/mcp-integrations` | Not injected unless a real container-safe host adapter exists |
 | Electron UI, local DB, account stores | `apps/desktop/src/main` | Not applicable to Harbor task execution |
 
@@ -55,6 +57,26 @@ The repository includes two derived profiles for parity checks:
   Maker Memory off.
 - `profiles/cindy-planning/profile.example.json`: Cindy planning permission
   mode with the production memory/context settings.
+- `profiles/cindy-production-codex/profile.example.json`: Cindy Codex app-server
+  profile with Maker Memory and project context enabled.
+
+## Codex Authentication Boundary
+
+Codex does not use `CINDY_HEADLESS_API_KEY`. The headless host passes an explicit
+`CODEX_HOME` to Cindy's `CodexAgent`; configure it with
+`CINDY_HEADLESS_CODEX_HOME` (preferred) or `CODEX_HOME`. Production containers
+should mount an isolated Codex home containing only the credentials and config
+needed by the run. Headless never copies or persists the user's local
+`~/.codex` directory.
+
+The local smoke profile proved a real Codex turn and real `cindy_memory`
+`list_tools`/`memory_list` calls. A developer's existing `~/.codex/config.toml`
+may still contain unrelated MCP servers; those are an external local
+configuration concern and must not be mounted into a production Harbor image.
+
+Codex usage is normalized from Cindy's native `done.data.usage` fields:
+`promptTokens`, `cachedTokens`, and `completionTokens`. The raw provider record
+and normalized schema are both written to `usage.json`.
 
 ## Harbor Boundary
 

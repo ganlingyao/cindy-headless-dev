@@ -2,7 +2,8 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createMemoryMcpProvider } from '@cindy/mcps/memory';
-import { ClaudeCodeAgent, Maker, MakerMemoryManager, isTerminalTurnEvent, type AgentEvent, type AgentRuntimeConfig, type AuthAdapter, type Logger, type SessionMeta, type SessionStorage } from '@cindy/maker-core';
+import { ClaudeCodeAgent, CodexAgent, Maker, MakerMemoryManager, isTerminalTurnEvent, type AgentEvent, type AgentKind, type AgentRuntimeConfig, type AuthAdapter, type BaseAgent, type Logger, type SessionMeta, type SessionStorage } from '@cindy/maker-core';
+import { startCodexMemoryBridge, type CodexMemoryBridge } from './codex-memory-bridge.js';
 import type { ResolvedProfile } from './profile.js';
 import { readProjectContext } from './project-context.js';
 import { openHeadlessSqlite } from './sqlite.js';
@@ -18,8 +19,19 @@ class MemorySessionStorage implements SessionStorage {
   async delete(id: string): Promise<void> { this.rows.delete(id); }
 }
 
-function envAuth(): AuthAdapter {
+function claudeAuth(): AuthAdapter {
   return { async getState() { const key = process.env.CINDY_HEADLESS_API_KEY ?? process.env.ANTHROPIC_API_KEY; return { authenticated: Boolean(key), authSource: key ? 'api-key' : undefined }; }, async triggerLogin() { return this.getState(); }, async logout() {}, async getAuthEnv(): Promise<Record<string, string>> { const key = process.env.CINDY_HEADLESS_API_KEY ?? process.env.ANTHROPIC_API_KEY; return key ? { ANTHROPIC_API_KEY: key } : {}; } };
+}
+
+function codexAuth(): AuthAdapter {
+  const configuredHome = process.env.CINDY_HEADLESS_CODEX_HOME ?? process.env.CODEX_HOME;
+  const codexHome = configuredHome ? path.resolve(configuredHome) : undefined;
+  return {
+    async getState() { return { authenticated: Boolean(codexHome), authSource: codexHome ? 'oauth' : undefined, errorReason: codexHome ? undefined : 'missing_codex_home' }; },
+    async triggerLogin() { return this.getState(); },
+    async logout() {},
+    async getAuthEnv(): Promise<Record<string, string>> { return codexHome ? { CODEX_HOME: codexHome } : {}; },
+  };
 }
 
 function jsonLogger(): Logger {
@@ -28,7 +40,7 @@ function jsonLogger(): Logger {
   return result;
 }
 
-function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string): { maker: Maker; makerMemory: MakerMemoryManager } {
+function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workingDir: string): { maker: Maker; makerMemory: MakerMemoryManager; shutdownBridge(): Promise<void> } {
   const profile = resolved.profile;
   const logger = jsonLogger();
   const makerMemory = new MakerMemoryManager({
@@ -42,13 +54,41 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string): { mak
     agents: {},
     logger: logger.child('maker-memory'),
     initialEnabled: profile.makerMemory,
-    reviewAgent: 'claude-code',
+    reviewAgent: profile.agentBackend,
   });
   const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, userDataPath: stateDir, memoryEnabled: profile.nativeMemory, makerMemoryEnabled: profile.makerMemory, behaviorFlags: profile.containerSandbox ? { IS_SANDBOX: '1' } : undefined, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
-  const memoryProviders = [createMemoryMcpProvider({ getManager: () => makerMemory, logger: logger.child('cindy-memory-mcp') })];
-  const agent = new ClaudeCodeAgent({ auth: envAuth(), runtimeConfig, binaryPath: profile.agentBinaryPath, logger, mcpProviders: memoryProviders, makerMemory });
-  makerMemory.setAgents({ 'claude-code': agent });
-  return { maker: new Maker({ agents: { 'claude-code': agent }, storage: new MemorySessionStorage(), logger, makerMemory }), makerMemory };
+  const memoryProvider = createMemoryMcpProvider({ getManager: () => makerMemory, logger: logger.child('cindy-memory-mcp') });
+  const memoryProviders = profile.makerMemory ? [memoryProvider] : [];
+  let bridge: CodexMemoryBridge | undefined;
+  let bridgePromise: Promise<CodexMemoryBridge> | undefined;
+  let agent: BaseAgent;
+  if (profile.agentBackend === 'claude-code') {
+    agent = new ClaudeCodeAgent({ auth: claudeAuth(), runtimeConfig, binaryPath: profile.agentBinaryPath, logger, mcpProviders: memoryProviders, makerMemory });
+  } else {
+    agent = new CodexAgent({
+      auth: codexAuth(),
+      runtimeConfig,
+      binaryPath: profile.agentBinaryPath,
+      logger,
+      mcpProviders: memoryProviders,
+      makerMemory,
+      prepareCodexExtraSpawnConfig: memoryProviders.length === 0 ? undefined : async () => {
+        bridgePromise ??= startCodexMemoryBridge({ provider: memoryProvider, workingDir, logger });
+        bridge = await bridgePromise;
+        return { extraArgs: bridge.extraArgs, extraEnv: bridge.extraEnv };
+      },
+    });
+  }
+  const agents = { [profile.agentBackend]: agent } as Record<AgentKind, BaseAgent>;
+  makerMemory.setAgents(agents);
+  return {
+    maker: new Maker({ agents, storage: new MemorySessionStorage(), logger, makerMemory }),
+    makerMemory,
+    async shutdownBridge() {
+      if (!bridge && bridgePromise) bridge = await bridgePromise.catch(() => undefined);
+      await bridge?.shutdown();
+    },
+  };
 }
 
 export function classifyFailure(error: string | undefined, terminalError: AgentEvent | undefined, deadlineKilled: boolean): string {
@@ -61,11 +101,23 @@ export function classifyFailure(error: string | undefined, terminalError: AgentE
   return 'valid-agent-error';
 }
 
-export function extractProviderUsage(events: AgentEvent[]): { rawProviderUsage: Record<string, unknown> | null; normalizedUsage: NormalizedUsage } {
+export function extractProviderUsage(events: AgentEvent[], agentBackend: AgentKind = 'claude-code'): { rawProviderUsage: Record<string, unknown> | null; normalizedUsage: NormalizedUsage } {
   const done = [...events].reverse().find((event) => event.type === 'done');
   const data = done?.data && typeof done.data === 'object' ? done.data as Record<string, unknown> : undefined;
   const raw = data?.usage && typeof data.usage === 'object' ? data.usage as Record<string, unknown> : null;
   const number = (key: string): number => typeof raw?.[key] === 'number' ? raw[key] as number : 0;
+  if (agentBackend === 'codex') {
+    return {
+      rawProviderUsage: raw,
+      normalizedUsage: {
+        inputTokens: number('promptTokens'),
+        cacheReadTokens: number('cachedTokens'),
+        cacheCreationTokens: 0,
+        outputTokens: number('completionTokens'),
+        costUsd: 0,
+      },
+    };
+  }
   return {
     rawProviderUsage: raw,
     normalizedUsage: {
@@ -90,7 +142,7 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   process.env.CLAUDE_CONFIG_DIR = path.join(cleanHome, '.claude');
   const events: AgentEvent[] = [];
   let session: Awaited<ReturnType<Maker['createSession']>> | undefined;
-  let makerMemory: MakerMemoryManager | undefined;
+  let runtime: ReturnType<typeof createHeadlessMaker> | undefined;
   const startedAt = Date.now();
   let error: string | undefined;
   let deadlineKilled = false;
@@ -100,9 +152,8 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   const stateDir = path.resolve(process.env.CINDY_HEADLESS_STATE_DIR ?? path.join(absoluteOutputDir, 'state'));
   try {
     await mkdir(stateDir, { recursive: true });
-    const runtime = createHeadlessMaker(resolved, stateDir);
-    makerMemory = runtime.makerMemory;
-    session = await runtime.maker.createSession({ agentKind: 'claude-code', workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
+    runtime = createHeadlessMaker(resolved, stateDir, absoluteWorkingDir);
+    session = await runtime.maker.createSession({ agentKind: profile.agentBackend, workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
     let resolveTerminal: (() => void) | undefined;
     let terminal = Promise.resolve();
     session.onEvent((event) => { events.push(event); if (event.type === 'error' && isTerminalTurnEvent(event)) terminalError = event; if (isTerminalTurnEvent(event)) resolveTerminal?.(); });
@@ -123,11 +174,13 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   // it before extracting provider usage so Harbor receives real token counts.
   try { await session?.close(); } catch { /* artifact writing must still run */ }
   const usage = session?.getUsageSnapshot() ?? { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
-  const providerUsage = extractProviderUsage(events);
+  const providerUsage = extractProviderUsage(events, profile.agentBackend);
+  if (providerUsage.normalizedUsage.costUsd === 0 && usage.costUsd > 0) providerUsage.normalizedUsage.costUsd = usage.costUsd;
   const identity = { schemaVersion: 1, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, requestedModelId: profile.model.requestedId, provider: profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
   const status = classifyFailure(error, terminalError, deadlineKilled);
   const result = { schemaVersion: 1, status, sessionId: session?.id ?? null, turnsCount: turns.length > 0 ? turns.length : 1, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length };
-  try { makerMemory?.dispose(); } catch { /* best effort cleanup */ }
+  try { await runtime?.maker.shutdown(); } catch { /* best effort cleanup */ }
+  try { await runtime?.shutdownBridge(); } catch { /* best effort cleanup */ }
   for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
   await rm(cleanHome, { recursive: true, force: true });
   await Promise.all([

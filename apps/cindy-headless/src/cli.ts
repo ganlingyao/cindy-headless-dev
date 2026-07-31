@@ -10,7 +10,7 @@ function flag(name: string): string | undefined { const index = args.indexOf(nam
 function requireFlag(name: string): string { const value = flag(name); if (!value) throw new Error(`${name} is required`); return value; }
 
 async function main(): Promise<void> {
-  if (command === 'version') { console.log(JSON.stringify({ name: 'cindy-headless', version: '0.1.0', phase: 0 })); return; }
+  if (command === 'version') { console.log(JSON.stringify({ name: 'cindy-headless', version: '0.1.0', phase: 4, backends: ['claude-code', 'codex'] })); return; }
   if (command === 'doctor' || command === 'capabilities' || command === 'profile') {
     if (command === 'profile' && args[1] !== 'validate') throw new Error('usage: profile validate --profile <file>');
     const resolved = await readProfile(requireFlag('--profile'));
