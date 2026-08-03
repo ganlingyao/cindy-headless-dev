@@ -48,6 +48,20 @@ export interface PairedRunResult {
   upstreamProvider?: string;
 }
 
+export interface EvaluationReport {
+  schemaVersion: 1;
+  manifestDigest: string;
+  trialCount: number;
+  byBenchmark: PairedSummary['byBenchmark'];
+  byAgent: PairedSummary['byAgent'];
+  resultClasses: PairedSummary['resultClasses'];
+  confidenceIntervals: PairedSummary['confidenceIntervals'];
+  paired: Pick<PairedSummary, 'pairCount' | 'completePairCount' | 'incompletePairCount' | 'bothPass' | 'bothFail' | 'firstArmOnlyPass' | 'secondArmOnlyPass'>;
+  unsupported: Array<{ variantId: string; modelId: string; reason: string }>;
+  totals: { costUsd: number; inputTokens: number; cacheTokens: number; outputTokens: number; durationMs: number };
+  upstreamProviders: Record<string, number>;
+}
+
 export interface PairedSummary {
   pairCount: number;
   completePairCount: number;
@@ -222,6 +236,32 @@ export function expandPlan(manifest: BenchmarkManifest): { schemaVersion: 1; man
 export function expandScheduledPlan(manifest: BenchmarkManifest): { schemaVersion: 1; manifestDigest: string; cells: BenchmarkCell[] } {
   const plan = expandPlan(manifest);
   return { ...plan, cells: schedulePlan(plan.cells, manifest) };
+}
+
+export function createEvaluationReport(manifest: BenchmarkManifest, results: PairedRunResult[]): EvaluationReport {
+  const summary = summarizePairedResults(results);
+  const supported = new Set(manifest.variants.flatMap((variant) => manifest.modelIds.filter((model) => variant.supportedModelIds.includes(model)).map((model) => `${variant.id}:${model}`)));
+  const unsupported = manifest.variants.flatMap((variant) => manifest.modelIds.filter((model) => !supported.has(`${variant.id}:${model}`)).map((model) => ({ variantId: variant.id, modelId: model, reason: 'variant does not declare support for exact model' })));
+  return {
+    schemaVersion: 1,
+    manifestDigest: sha256(JSON.stringify(manifest)),
+    trialCount: results.length,
+    byBenchmark: summary.byBenchmark,
+    byAgent: summary.byAgent,
+    resultClasses: summary.resultClasses,
+    confidenceIntervals: summary.confidenceIntervals,
+    paired: { pairCount: summary.pairCount, completePairCount: summary.completePairCount, incompletePairCount: summary.incompletePairCount, bothPass: summary.bothPass, bothFail: summary.bothFail, firstArmOnlyPass: summary.firstArmOnlyPass, secondArmOnlyPass: summary.secondArmOnlyPass },
+    unsupported,
+    totals: { costUsd: summary.totalCostUsd, inputTokens: summary.totalInputTokens, cacheTokens: summary.totalCacheTokens, outputTokens: summary.totalOutputTokens, durationMs: summary.totalDurationMs },
+    upstreamProviders: summary.upstreamProviders,
+  };
+}
+
+export function freezeHard30(historical: Array<{ taskId: string; solveRate: number }>, taskCount = 30): { schemaVersion: 1; source: 'independent-historical-data'; taskIds: string[]; taskListDigest: string } {
+  if (historical.length < taskCount) throw new Error(`hard-30 requires at least ${taskCount} independent historical tasks`);
+  const sorted = [...historical].sort((a, b) => a.solveRate - b.solveRate || a.taskId.localeCompare(b.taskId));
+  const taskIds = sorted.slice(0, taskCount).map((item) => item.taskId);
+  return { schemaVersion: 1, source: 'independent-historical-data', taskIds, taskListDigest: sha256(JSON.stringify(taskIds)) };
 }
 
 export async function writePlan(manifestPath: string, outputPath: string): Promise<void> {

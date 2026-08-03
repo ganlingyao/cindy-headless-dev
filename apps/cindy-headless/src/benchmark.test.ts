@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { expandPairedPlan, expandPlan, schedulePlan, shouldRetry, shouldStop, summarizePairedResults, validateManifest, validateOracleGate, validatePairedManifest } from './benchmark.js';
+import { createEvaluationReport, expandPairedPlan, expandPlan, freezeHard30, schedulePlan, shouldRetry, shouldStop, summarizePairedResults, validateManifest, validateOracleGate, validatePairedManifest } from './benchmark.js';
 
 const manifest = { schemaVersion: 1, board: 'same-model-harness', dataset: { name: 'terminal-bench/terminal-bench-2-1', revision: '6', taskIds: ['e', 'd', 'c', 'b', 'a'] }, modelIds: ['model-1'], repetitions: 2, variants: [{ id: 'raw', supportedModelIds: ['model-1'] }, { id: 'cindy', supportedModelIds: ['model-1'] }], seed: 127 } as const;
 
@@ -42,6 +42,15 @@ describe('benchmark plan', () => {
     expect(shouldRetry('ERRORED_INFRA', 1, configured).retry).toBe(true);
     expect(shouldRetry('FAILED_AGENT', 1, configured).retry).toBe(false);
     expect(shouldStop([{ ...results('a'), resultClass: 'FAILED_AGENT' }, { ...results('b'), resultClass: 'ERRORED_INFRA' }], configured).stop).toBe(true);
+  });
+  it('creates an auditable report and freezes hard-30 only from independent history', () => {
+    const report = createEvaluationReport(validateManifest(manifest), [{ ...results('a'), reward: 1, resultClass: 'PASSED', benchmark: 'tb' }]);
+    expect(report.trialCount).toBe(1);
+    expect(report.manifestDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(() => freezeHard30([{ taskId: 'only', solveRate: 0.1 }])).toThrow(/independent/);
+    const frozen = freezeHard30(Array.from({ length: 30 }, (_, i) => ({ taskId: `task-${i}`, solveRate: i / 30 })));
+    expect(frozen.taskIds).toHaveLength(30);
+    expect(frozen.taskListDigest).toMatch(/^[a-f0-9]{64}$/);
   });
 });
 

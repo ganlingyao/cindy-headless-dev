@@ -2,7 +2,7 @@
 import { capabilities, doctor, readProfile } from './profile.js';
 import { runTask } from './host.js';
 import { readFile } from 'node:fs/promises';
-import { expandPairedPlan, expandPlan, expandScheduledPlan, summarizePairedResults, validateManifest, validateOracleGate, validatePairedManifest, writePlan } from './benchmark.js';
+import { createEvaluationReport, expandPairedPlan, expandPlan, expandScheduledPlan, freezeHard30, summarizePairedResults, validateManifest, validateOracleGate, validatePairedManifest, writePlan } from './benchmark.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? 'help';
@@ -51,13 +51,24 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(summarizePairedResults(results), null, 2));
     return;
   }
+  if (command === 'report') {
+    const manifest = validateManifest(JSON.parse(await readFile(requireFlag('--manifest'), 'utf8')));
+    const results = JSON.parse(await readFile(requireFlag('--results'), 'utf8'));
+    console.log(JSON.stringify(createEvaluationReport(manifest, results), null, 2));
+    return;
+  }
+  if (command === 'freeze-hard-30') {
+    const historical = JSON.parse(await readFile(requireFlag('--historical'), 'utf8')) as Array<{ taskId: string; solveRate: number }>;
+    console.log(JSON.stringify(freezeHard30(historical), null, 2));
+    return;
+  }
   if (command === 'oracle-gate') {
     const manifest = validateManifest(JSON.parse(await readFile(requireFlag('--manifest'), 'utf8')));
     const results = JSON.parse(await readFile(requireFlag('--results'), 'utf8')) as Array<{ taskId: string; reward: number }>;
     console.log(JSON.stringify(validateOracleGate(manifest.dataset.taskIds, results), null, 2));
     return;
   }
-  console.error('cindy-headless commands: version, doctor, profile validate, capabilities, run [--turns-file], plan [--paired], paired-summary, oracle-gate');
+  console.error('cindy-headless commands: version, doctor, profile validate, capabilities, run [--turns-file], plan [--paired|--scheduled], paired-summary, report, freeze-hard-30, oracle-gate');
   process.exitCode = 2;
 }
 
