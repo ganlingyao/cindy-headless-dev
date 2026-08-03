@@ -103,7 +103,8 @@ class CindyHeadlessAgent(BaseAgent):
             raise RuntimeError("CINDY_EVAL_STOP_COST_LIMIT")
         if self.stop_after_failures is not None and self._batch_failures >= self.stop_after_failures:
             raise RuntimeError("CINDY_EVAL_STOP_FAILURE_LIMIT")
-        task_id = self.extra_env.get("CINDY_TASK_ID") or context.metadata.get("task_id") if context.metadata else None
+        trial_name = self.logs_dir.parent.name
+        task_id = self.extra_env.get("CINDY_TASK_ID") or (context.metadata.get("task_id") if context.metadata else None) or trial_name.split("__", 1)[0]
         base_env = {
             **self.extra_env,
             "CINDY_HEADLESS_TASK": instruction,
@@ -112,6 +113,8 @@ class CindyHeadlessAgent(BaseAgent):
             "CINDY_RUN_ID": self.run_id or "harbor-run",
             "CINDY_MANIFEST_DIGEST": self.manifest_digest or "",
             "CINDY_TASK_ID": task_id or "unknown",
+            "CINDY_REPETITION": self.extra_env.get("CINDY_REPETITION", "1"),
+            "HARBOR_VERSION": "0.20.0",
         }
         if profile.get("agentBackend") == "codex":
             base_env["CINDY_HEADLESS_CODEX_HOME"] = "/opt/cindy-headless/codex-home"

@@ -27,6 +27,12 @@ Each generated cell has a stable `cellId`. The Headless result and identity arti
 
 After collecting the normalized `result.json` records into an array, generate the auditable report with:
 
+First collect Harbor trial artifacts (the collector never reads secrets or prompt bodies):
+
+```powershell
+python benchmarks/harbor/collect_results.py D:/Tools/Harbor/jobs/<job> results.json
+```
+
 ```powershell
 node apps/cindy-headless/dist/cli.cjs report --manifest manifest.json --results results.json > report.json
 ```

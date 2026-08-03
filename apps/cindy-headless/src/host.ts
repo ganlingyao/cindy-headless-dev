@@ -101,8 +101,8 @@ export function classifyFailure(error: string | undefined, terminalError: AgentE
   return 'valid-agent-error';
 }
 
-function standardResult(status: string, reward: number | null): 'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK' {
-  if (status === 'valid-completed') return reward === 1 ? 'PASSED' : 'FAILED_AGENT';
+function standardResult(status: string, reward: number | null): 'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK' | null {
+  if (status === 'valid-completed') return reward === null ? null : reward === 1 ? 'PASSED' : 'FAILED_AGENT';
   if (status === 'valid-agent-error' || status === 'valid-deadline-killed') return 'FAILED_AGENT';
   if (status.includes('invalid-task')) return 'INVALID_TASK';
   return 'ERRORED_INFRA';
