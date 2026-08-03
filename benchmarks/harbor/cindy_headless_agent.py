@@ -19,6 +19,7 @@ class CindyHeadlessAgent(BaseAgent):
         logs_dir: Path,
         bundle_dir: str,
         profile_path: str,
+        codex_home_dir: str | None = None,
         version: str = "0.1.0",
         *args,
         **kwargs,
@@ -26,11 +27,14 @@ class CindyHeadlessAgent(BaseAgent):
         super().__init__(logs_dir, *args, **kwargs)
         self.bundle_dir = Path(bundle_dir).resolve()
         self.profile_path = Path(profile_path).resolve()
+        self.codex_home_dir = Path(codex_home_dir).resolve() if codex_home_dir else None
         self._version = version
         if not self.bundle_dir.is_dir():
             raise ValueError(f"bundle_dir does not exist: {self.bundle_dir}")
         if not self.profile_path.is_file():
             raise ValueError(f"profile_path does not exist: {self.profile_path}")
+        if self.codex_home_dir is not None and not self.codex_home_dir.is_dir():
+            raise ValueError(f"codex_home_dir does not exist: {self.codex_home_dir}")
 
     @staticmethod
     @override
@@ -49,11 +53,17 @@ class CindyHeadlessAgent(BaseAgent):
         profile = json.loads(self.profile_path.read_text(encoding="utf-8"))
         backend = profile.get("agentBackend", "claude-code")
         binary = "codex" if backend == "codex" else "claude"
+        runtime_env = dict(self.extra_env)
+        if backend == "codex":
+            if self.codex_home_dir is None:
+                raise ValueError("codex profiles require an explicit codex_home_dir")
+            await environment.upload_dir(self.codex_home_dir, "/opt/cindy-headless/codex-home")
+            runtime_env["CINDY_HEADLESS_CODEX_HOME"] = "/opt/cindy-headless/codex-home"
         result = await environment.exec(
             f"set -e; chmod +x /opt/cindy-headless/bin/{binary}; "
             "node /opt/cindy-headless/dist/cli.cjs doctor "
             f"--profile {container_profile} --output-dir /logs/agent",
-            env=self.extra_env,
+            env=runtime_env,
             timeout_sec=60,
         )
         if result.return_code != 0:
@@ -74,6 +84,8 @@ class CindyHeadlessAgent(BaseAgent):
                 f"Harbor model {requested!r} does not match profile model {configured!r}"
             )
         env = {**self.extra_env, "CINDY_HEADLESS_TASK": instruction}
+        if profile.get("agentBackend") == "codex":
+            env["CINDY_HEADLESS_CODEX_HOME"] = "/opt/cindy-headless/codex-home"
         container_profile = f"/opt/cindy-headless/profile/{self.profile_path.name}"
         result = await environment.exec(
             "node /opt/cindy-headless/dist/cli.cjs run "

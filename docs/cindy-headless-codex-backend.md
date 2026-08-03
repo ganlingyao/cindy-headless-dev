@@ -52,3 +52,25 @@ For Harbor, mount an isolated Codex home containing only the credentials and
 configuration needed by the task. Do not mount a developer's full `~/.codex`,
 because its unrelated MCP servers and plugins are outside Cindy Headless's
 declared harness surface.
+
+## Harbor Task-Container Verification
+
+A real Harbor 0.20 `hello-world` trial completed on 2026-08-03 using the
+`cindy-production-codex` profile and the pinned Linux Codex `0.145.0` binary.
+
+- Job: `cindy-headless-codex-hello-world-v3`
+- Trial: `hello-world__C9DHELj`
+- Model: `gpt-5.4-mini`
+- Reward: `1.0`
+- Exceptions and retries: `0`
+- Headless status: `valid-completed`
+- Agent execution: `17.431s`
+- Harbor total runtime: `1m 23s`
+- Input/cache/output tokens: `36771 / 28288 / 422`
+- Verifier tests: `2 passed, 0 failed`
+- Credential-pattern matches in collected artifacts: `0`
+
+The trial created `/app/hello.txt`, read it back through the Codex native tool
+surface, and the Harbor verifier confirmed both file existence and exact
+content. The Codex home uploaded by the adapter contained only `auth.json`; no
+developer MCP or plugin configuration entered the container.
