@@ -9,9 +9,16 @@ export interface BenchmarkManifest {
   repetitions: number;
   variants: Array<{ id: string; supportedModelIds: string[] }>;
   seed: number;
+  concurrency?: number;
+  agentOrder?: string[];
+  runtime?: { timeoutMs?: number; cpu?: number; memoryMb?: number; network?: string; permissions?: string };
+  retry?: { agent: 0; infra: 0 | 1 };
+  budget?: { maxCostUsd?: number; stopAfterFailures?: number };
+  throughputCap?: { outputTokensPerSecond: number; enabled: boolean };
 }
 
 export interface BenchmarkCell {
+  cellId: string;
   variantId: string;
   modelId: string;
   taskId: string;
@@ -35,6 +42,10 @@ export interface PairedRunResult {
   inputTokens?: number;
   cacheTokens?: number;
   outputTokens?: number;
+  benchmark?: string;
+  resultClass?: 'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK';
+  durationMs?: number;
+  upstreamProvider?: string;
 }
 
 export interface PairedSummary {
@@ -49,6 +60,52 @@ export interface PairedSummary {
   totalInputTokens: number;
   totalCacheTokens: number;
   totalOutputTokens: number;
+  byBenchmark: Record<string, { trials: number; passed: number; passRate: number }>;
+  byAgent: Record<string, { trials: number; passed: number; passRate: number }>;
+  resultClasses: Record<'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK', number>;
+  totalDurationMs: number;
+  upstreamProviders: Record<string, number>;
+  confidenceIntervals: Record<string, { successes: number; trials: number; lower95: number; upper95: number }>;
+}
+
+export interface RetryDecision { retry: boolean; reason: 'agent-failure' | 'infra-error' | 'invalid-task' | 'passed' | 'retry-exhausted'; nextAttempt: number; }
+
+export function shouldRetry(resultClass: PairedRunResult['resultClass'], attemptNumber: number, manifest: BenchmarkManifest): RetryDecision {
+  if (resultClass === 'ERRORED_INFRA' && attemptNumber <= (manifest.retry?.infra ?? 1)) return { retry: true, reason: 'infra-error', nextAttempt: attemptNumber + 1 };
+  if (resultClass === 'ERRORED_INFRA') return { retry: false, reason: 'retry-exhausted', nextAttempt: attemptNumber };
+  if (resultClass === 'FAILED_AGENT') return { retry: false, reason: 'agent-failure', nextAttempt: attemptNumber };
+  if (resultClass === 'INVALID_TASK') return { retry: false, reason: 'invalid-task', nextAttempt: attemptNumber };
+  return { retry: false, reason: 'passed', nextAttempt: attemptNumber };
+}
+
+export function shouldStop(results: PairedRunResult[], manifest: BenchmarkManifest): { stop: boolean; reason: 'cost-limit' | 'failure-limit' | null } {
+  const cost = results.reduce((sum, result) => sum + (result.costUsd ?? 0), 0);
+  if (manifest.budget?.maxCostUsd !== undefined && cost >= manifest.budget.maxCostUsd) return { stop: true, reason: 'cost-limit' };
+  const failures = results.filter((result) => result.resultClass === 'FAILED_AGENT' || result.resultClass === 'ERRORED_INFRA').length;
+  if (manifest.budget?.stopAfterFailures !== undefined && failures >= manifest.budget.stopAfterFailures) return { stop: true, reason: 'failure-limit' };
+  return { stop: false, reason: null };
+}
+
+function seededShuffle<T>(items: T[], seed: number): T[] {
+  const output = [...items]; let state = seed >>> 0;
+  for (let i = output.length - 1; i > 0; i -= 1) { state = (1664525 * state + 1013904223) >>> 0; const j = state % (i + 1); [output[i], output[j]] = [output[j], output[i]]; }
+  return output;
+}
+
+export function schedulePlan(cells: BenchmarkCell[], manifest: BenchmarkManifest): BenchmarkCell[] {
+  const ordered = manifest.agentOrder?.length ? [...manifest.agentOrder, ...manifest.variants.map((v) => v.id).filter((id) => !manifest.agentOrder?.includes(id))] : manifest.variants.map((v) => v.id);
+  const rank = new Map(ordered.map((id, index) => [id, index]));
+  const grouped = new Map<string, BenchmarkCell[]>();
+  for (const cell of cells) { const key = `${cell.taskId}:${cell.modelId}:${cell.repetition}`; grouped.set(key, [...(grouped.get(key) ?? []), cell]); }
+  const pairs = seededShuffle([...grouped.values()], manifest.seed);
+  return pairs.flatMap((pair) => [...pair].sort((a, b) => (rank.get(a.variantId) ?? 999) - (rank.get(b.variantId) ?? 999)));
+}
+
+function wilson(successes: number, trials: number): { lower95: number; upper95: number } {
+  if (!trials) return { lower95: 0, upper95: 0 };
+  const p = successes / trials; const z = 1.96; const denominator = 1 + z * z / trials;
+  const centre = p + z * z / (2 * trials); const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * trials)) / trials);
+  return { lower95: Math.max(0, (centre - spread) / denominator), upper95: Math.min(1, (centre + spread) / denominator) };
 }
 
 export function validateManifest(value: unknown): BenchmarkManifest {
@@ -59,6 +116,12 @@ export function validateManifest(value: unknown): BenchmarkManifest {
   if (!manifest.dataset?.name || !manifest.dataset.revision || !Array.isArray(manifest.dataset.taskIds) || manifest.dataset.taskIds.length === 0) throw new Error('dataset name, revision and taskIds are required');
   if (new Set(manifest.dataset.taskIds).size !== manifest.dataset.taskIds.length) throw new Error('dataset.taskIds contains duplicates');
   if (!Number.isInteger(manifest.repetitions) || (manifest.repetitions ?? 0) < 1) throw new Error('repetitions must be a positive integer');
+  if (manifest.concurrency !== undefined && (!Number.isInteger(manifest.concurrency) || manifest.concurrency < 1)) throw new Error('concurrency must be a positive integer');
+  if (manifest.agentOrder !== undefined && (!Array.isArray(manifest.agentOrder) || new Set(manifest.agentOrder).size !== manifest.agentOrder.length)) throw new Error('agentOrder must be a duplicate-free array');
+  if (manifest.retry && (manifest.retry.agent !== 0 || ![0, 1].includes(manifest.retry.infra))) throw new Error('retry must be agent=0 and infra=0|1');
+  if (manifest.budget?.maxCostUsd !== undefined && (!Number.isFinite(manifest.budget.maxCostUsd) || manifest.budget.maxCostUsd <= 0)) throw new Error('budget.maxCostUsd must be positive');
+  if (manifest.budget?.stopAfterFailures !== undefined && (!Number.isInteger(manifest.budget.stopAfterFailures) || manifest.budget.stopAfterFailures < 1)) throw new Error('budget.stopAfterFailures must be positive');
+  if (manifest.throughputCap && (!Number.isFinite(manifest.throughputCap.outputTokensPerSecond) || manifest.throughputCap.outputTokensPerSecond <= 0)) throw new Error('throughputCap rate must be positive');
   if (!Array.isArray(manifest.modelIds) || manifest.modelIds.length === 0 || !Array.isArray(manifest.variants) || manifest.variants.length < 1) throw new Error('modelIds and variants must be non-empty');
   const variantIds = manifest.variants.map((variant) => variant.id);
   if (variantIds.some((id) => typeof id !== 'string' || id.trim() === '')) throw new Error('variant IDs must be non-empty');
@@ -83,7 +146,10 @@ export function expandPairedPlan(manifest: BenchmarkManifest): { schemaVersion: 
   const cells: PairedBenchmarkCell[] = [];
   for (const taskId of manifest.dataset.taskIds) for (const modelId of manifest.modelIds) for (let repetition = 1; repetition <= manifest.repetitions; repetition += 1) {
     manifest.variants.forEach((variant, armIndex) => {
-      if (variant.supportedModelIds.includes(modelId)) cells.push({ pairId: `${taskId}:${modelId}:${repetition}`, armIndex, variantId: variant.id, modelId, taskId, repetition });
+      if (variant.supportedModelIds.includes(modelId)) {
+        const cellId = sha256(JSON.stringify({ dataset: manifest.dataset, taskId, variant: variant.id, modelId, repetition }));
+        cells.push({ cellId, pairId: `${taskId}:${modelId}:${repetition}`, armIndex, variantId: variant.id, modelId, taskId, repetition });
+      }
     });
   }
   return { schemaVersion: 1, manifestDigest: sha256(JSON.stringify(manifest)), cells };
@@ -99,6 +165,12 @@ export function summarizePairedResults(results: PairedRunResult[]): PairedSummar
   let totalInputTokens = 0;
   let totalCacheTokens = 0;
   let totalOutputTokens = 0;
+  let totalDurationMs = 0;
+  const byBenchmark: PairedSummary['byBenchmark'] = {};
+  const byAgent: PairedSummary['byAgent'] = {};
+  const resultClasses: PairedSummary['resultClasses'] = { PASSED: 0, FAILED_AGENT: 0, ERRORED_INFRA: 0, INVALID_TASK: 0 };
+  const upstreamProviders: Record<string, number> = {};
+  const confidenceIntervals: PairedSummary['confidenceIntervals'] = {};
   for (const result of results) {
     if (!Number.isFinite(result.reward)) throw new Error(`invalid reward for ${result.taskId}`);
     const key = `${result.taskId}:${result.modelId}:${result.repetition}`;
@@ -109,6 +181,15 @@ export function summarizePairedResults(results: PairedRunResult[]): PairedSummar
     totalInputTokens += result.inputTokens ?? 0;
     totalCacheTokens += result.cacheTokens ?? 0;
     totalOutputTokens += result.outputTokens ?? 0;
+    totalDurationMs += result.durationMs ?? 0;
+    const benchmark = result.benchmark ?? 'unknown';
+    const agent = result.variantId;
+    const b = byBenchmark[benchmark] ?? { trials: 0, passed: 0, passRate: 0 };
+    b.trials += 1; b.passed += passed(result) ? 1 : 0; b.passRate = b.passed / b.trials; byBenchmark[benchmark] = b;
+    const a = byAgent[agent] ?? { trials: 0, passed: 0, passRate: 0 };
+    a.trials += 1; a.passed += passed(result) ? 1 : 0; a.passRate = a.passed / a.trials; byAgent[agent] = a;
+    if (result.resultClass) resultClasses[result.resultClass] += 1;
+    if (result.upstreamProvider) upstreamProviders[result.upstreamProvider] = (upstreamProviders[result.upstreamProvider] ?? 0) + 1;
   }
   let completePairCount = 0;
   let bothPass = 0;
@@ -126,15 +207,21 @@ export function summarizePairedResults(results: PairedRunResult[]): PairedSummar
     else if (first) firstArmOnlyPass += 1;
     else secondArmOnlyPass += 1;
   }
-  return { pairCount: pairs.size, completePairCount, incompletePairCount: pairs.size - completePairCount, bothPass, bothFail, firstArmOnlyPass, secondArmOnlyPass, totalCostUsd, totalInputTokens, totalCacheTokens, totalOutputTokens };
+  for (const [agent, stats] of Object.entries(byAgent)) confidenceIntervals[agent] = { successes: stats.passed, trials: stats.trials, ...wilson(stats.passed, stats.trials) };
+  return { pairCount: pairs.size, completePairCount, incompletePairCount: pairs.size - completePairCount, bothPass, bothFail, firstArmOnlyPass, secondArmOnlyPass, totalCostUsd, totalInputTokens, totalCacheTokens, totalOutputTokens, byBenchmark, byAgent, resultClasses, totalDurationMs, upstreamProviders, confidenceIntervals };
 }
 
 export function expandPlan(manifest: BenchmarkManifest): { schemaVersion: 1; manifestDigest: string; cells: BenchmarkCell[] } {
   const cells: BenchmarkCell[] = [];
   for (const taskId of manifest.dataset.taskIds) for (const modelId of manifest.modelIds) for (let repetition = 1; repetition <= manifest.repetitions; repetition += 1) for (const variant of manifest.variants) {
-    if (variant.supportedModelIds.includes(modelId)) cells.push({ variantId: variant.id, modelId, taskId, repetition });
+    if (variant.supportedModelIds.includes(modelId)) cells.push({ cellId: sha256(JSON.stringify({ dataset: manifest.dataset, taskId, variant: variant.id, modelId, repetition })), variantId: variant.id, modelId, taskId, repetition });
   }
   return { schemaVersion: 1, manifestDigest: sha256(JSON.stringify(manifest)), cells };
+}
+
+export function expandScheduledPlan(manifest: BenchmarkManifest): { schemaVersion: 1; manifestDigest: string; cells: BenchmarkCell[] } {
+  const plan = expandPlan(manifest);
+  return { ...plan, cells: schedulePlan(plan.cells, manifest) };
 }
 
 export async function writePlan(manifestPath: string, outputPath: string): Promise<void> {

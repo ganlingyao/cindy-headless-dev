@@ -2,7 +2,7 @@
 import { capabilities, doctor, readProfile } from './profile.js';
 import { runTask } from './host.js';
 import { readFile } from 'node:fs/promises';
-import { expandPairedPlan, summarizePairedResults, validateManifest, validateOracleGate, validatePairedManifest, writePlan } from './benchmark.js';
+import { expandPairedPlan, expandPlan, expandScheduledPlan, summarizePairedResults, validateManifest, validateOracleGate, validatePairedManifest, writePlan } from './benchmark.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? 'help';
@@ -38,7 +38,11 @@ async function main(): Promise<void> {
       const manifest = validatePairedManifest(validateManifest(JSON.parse(await readFile(manifestPath, 'utf8'))));
       const { writeFile } = await import('node:fs/promises');
       await writeFile(outputPath, JSON.stringify(expandPairedPlan(manifest), null, 2) + '\n', 'utf8');
-    } else await writePlan(manifestPath, outputPath);
+    } else {
+      const manifest = validateManifest(JSON.parse(await readFile(manifestPath, 'utf8')));
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(outputPath, JSON.stringify(args.includes('--scheduled') ? expandScheduledPlan(manifest) : expandPlan(manifest), null, 2) + '\n');
+    }
     console.log(JSON.stringify({ ok: true, output: requireFlag('--output') }));
     return;
   }

@@ -12,5 +12,17 @@
     { "id": "raw-claude-code", "supportedModelIds": ["claude-sonnet-4-6"] },
     { "id": "cindy-production-claude", "supportedModelIds": ["claude-sonnet-4-6"] }
   ],
-  "seed": 127
+  "seed": 127,
+  "concurrency": 1,
+  "agentOrder": ["raw-claude-code", "cindy-production-claude"],
+  "runtime": {
+    "timeoutMs": 900000,
+    "cpu": 2,
+    "memoryMb": 4096,
+    "network": "benchmark-default",
+    "permissions": "benchmark-default"
+  },
+  "retry": { "agent": 0, "infra": 1 },
+  "budget": { "maxCostUsd": 25, "stopAfterFailures": 5 },
+  "throughputCap": { "enabled": false, "outputTokensPerSecond": 35 }
 }

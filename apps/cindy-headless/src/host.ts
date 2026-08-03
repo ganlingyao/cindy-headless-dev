@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createMemoryMcpProvider } from '@cindy/mcps/memory';
 import { ClaudeCodeAgent, CodexAgent, Maker, MakerMemoryManager, isTerminalTurnEvent, type AgentEvent, type AgentKind, type AgentRuntimeConfig, type AuthAdapter, type BaseAgent, type Logger, type SessionMeta, type SessionStorage } from '@cindy/maker-core';
 import { startCodexMemoryBridge, type CodexMemoryBridge } from './codex-memory-bridge.js';
-import type { ResolvedProfile } from './profile.js';
+import { sha256, type ResolvedProfile } from './profile.js';
 import { readProjectContext } from './project-context.js';
 import { openHeadlessSqlite } from './sqlite.js';
 import { createUsageArtifact, type NormalizedUsage } from './usage.js';
@@ -101,6 +101,13 @@ export function classifyFailure(error: string | undefined, terminalError: AgentE
   return 'valid-agent-error';
 }
 
+function standardResult(status: string, reward: number | null): 'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK' {
+  if (status === 'valid-completed') return reward === 1 ? 'PASSED' : 'FAILED_AGENT';
+  if (status === 'valid-agent-error' || status === 'valid-deadline-killed') return 'FAILED_AGENT';
+  if (status.includes('invalid-task')) return 'INVALID_TASK';
+  return 'ERRORED_INFRA';
+}
+
 export function extractProviderUsage(events: AgentEvent[], agentBackend: AgentKind = 'claude-code'): { rawProviderUsage: Record<string, unknown> | null; normalizedUsage: NormalizedUsage } {
   const done = [...events].reverse().find((event) => event.type === 'done');
   const data = done?.data && typeof done.data === 'object' ? done.data as Record<string, unknown> : undefined;
@@ -176,9 +183,18 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   const usage = session?.getUsageSnapshot() ?? { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
   const providerUsage = extractProviderUsage(events, profile.agentBackend);
   if (providerUsage.normalizedUsage.costUsd === 0 && usage.costUsd > 0) providerUsage.normalizedUsage.costUsd = usage.costUsd;
-  const identity = { schemaVersion: 1, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, requestedModelId: profile.model.requestedId, provider: profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
   const status = classifyFailure(error, terminalError, deadlineKilled);
-  const result = { schemaVersion: 1, status, sessionId: session?.id ?? null, turnsCount: turns.length > 0 ? turns.length : 1, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length };
+  const reward = typeof process.env.CINDY_HEADLESS_REWARD === 'string' ? Number(process.env.CINDY_HEADLESS_REWARD) : null;
+  const benchmark = process.env.CINDY_BENCHMARK ?? null;
+  const taskId = process.env.CINDY_TASK_ID ?? null;
+  const repetition = Number(process.env.CINDY_REPETITION ?? '0') || null;
+  const runId = process.env.CINDY_RUN_ID ?? `local-${startedAt}`;
+  const cellId = process.env.CINDY_CELL_ID ?? sha256(JSON.stringify({ benchmark, revision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, agent: profile.id, model: profile.model.requestedId, repetition }));
+  const attemptId = process.env.CINDY_ATTEMPT_ID ?? `${cellId}-${startedAt}`;
+  const manifestDigest = process.env.CINDY_MANIFEST_DIGEST ?? null;
+  const standard = standardResult(status, reward);
+  const identity = { schemaVersion: 2, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, cindyCliVersion: '0.1.0', harborVersion: process.env.HARBOR_VERSION ?? null, litellmVersion: process.env.LITELLM_VERSION ?? null, requestedModelId: profile.model.requestedId, actualModelId: process.env.CINDY_ACTUAL_MODEL ?? profile.model.requestedId, provider: profile.model.provider, actualEndpoint: profile.endpoint ?? null, upstreamProvider: process.env.CINDY_UPSTREAM_PROVIDER ?? profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
+  const result = { schemaVersion: 2, status, resultClass: standard, reward, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, sessionId: session?.id ?? null, turnsCount: turns.length > 0 ? turns.length : 1, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length, retries: Number(process.env.CINDY_RETRY_COUNT ?? '0') || 0, replacesAttemptId: process.env.CINDY_REPLACES_ATTEMPT_ID ?? null };
   try { await runtime?.maker.shutdown(); } catch { /* best effort cleanup */ }
   try { await runtime?.shutdownBridge(); } catch { /* best effort cleanup */ }
   for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
