@@ -21,6 +21,13 @@ class CindyHeadlessAgent(BaseAgent):
         profile_path: str,
         codex_home_dir: str | None = None,
         version: str = "0.1.0",
+        benchmark: str | None = None,
+        benchmark_revision: str | None = None,
+        run_id: str | None = None,
+        manifest_digest: str | None = None,
+        infra_retries: int = 1,
+        max_cost_usd: float | None = None,
+        stop_after_failures: int | None = None,
         *args,
         **kwargs,
     ):
@@ -29,6 +36,15 @@ class CindyHeadlessAgent(BaseAgent):
         self.profile_path = Path(profile_path).resolve()
         self.codex_home_dir = Path(codex_home_dir).resolve() if codex_home_dir else None
         self._version = version
+        self.benchmark = benchmark or self.extra_env.get("CINDY_BENCHMARK")
+        self.benchmark_revision = benchmark_revision or self.extra_env.get("CINDY_BENCHMARK_REVISION")
+        self.run_id = run_id or self.extra_env.get("CINDY_RUN_ID")
+        self.manifest_digest = manifest_digest or self.extra_env.get("CINDY_MANIFEST_DIGEST")
+        self.infra_retries = max(0, min(int(infra_retries), 1))
+        self.max_cost_usd = max_cost_usd
+        self.stop_after_failures = stop_after_failures
+        self._batch_cost_usd = 0.0
+        self._batch_failures = 0
         if not self.bundle_dir.is_dir():
             raise ValueError(f"bundle_dir does not exist: {self.bundle_dir}")
         if not self.profile_path.is_file():
@@ -83,18 +99,46 @@ class CindyHeadlessAgent(BaseAgent):
             raise ValueError(
                 f"Harbor model {requested!r} does not match profile model {configured!r}"
             )
-        env = {**self.extra_env, "CINDY_HEADLESS_TASK": instruction}
+        if self.max_cost_usd is not None and self._batch_cost_usd >= self.max_cost_usd:
+            raise RuntimeError("CINDY_EVAL_STOP_COST_LIMIT")
+        if self.stop_after_failures is not None and self._batch_failures >= self.stop_after_failures:
+            raise RuntimeError("CINDY_EVAL_STOP_FAILURE_LIMIT")
+        task_id = self.extra_env.get("CINDY_TASK_ID") or context.metadata.get("task_id") if context.metadata else None
+        base_env = {
+            **self.extra_env,
+            "CINDY_HEADLESS_TASK": instruction,
+            "CINDY_BENCHMARK": self.benchmark or "harbor",
+            "CINDY_BENCHMARK_REVISION": self.benchmark_revision or "unknown",
+            "CINDY_RUN_ID": self.run_id or "harbor-run",
+            "CINDY_MANIFEST_DIGEST": self.manifest_digest or "",
+            "CINDY_TASK_ID": task_id or "unknown",
+        }
         if profile.get("agentBackend") == "codex":
-            env["CINDY_HEADLESS_CODEX_HOME"] = "/opt/cindy-headless/codex-home"
+            base_env["CINDY_HEADLESS_CODEX_HOME"] = "/opt/cindy-headless/codex-home"
         container_profile = f"/opt/cindy-headless/profile/{self.profile_path.name}"
-        result = await environment.exec(
-            "node /opt/cindy-headless/dist/cli.cjs run "
-            f"--profile {container_profile} "
-            "--working-dir /app --output-dir /logs/agent",
-            env=env,
-        )
+        last_error = ""
+        for attempt in range(1, self.infra_retries + 2):
+            attempt_dir = f"/logs/agent/attempt-{attempt}"
+            env = {**base_env, "CINDY_ATTEMPT_ID": f"{base_env['CINDY_TASK_ID']}-attempt-{attempt}", "CINDY_RETRY_COUNT": str(attempt - 1)}
+            if attempt > 1:
+                env["CINDY_REPLACES_ATTEMPT_ID"] = f"{base_env['CINDY_TASK_ID']}-attempt-1"
+            result = await environment.exec(
+                "mkdir -p " + attempt_dir + "; node /opt/cindy-headless/dist/cli.cjs run "
+                f"--profile {container_profile} --working-dir /app --output-dir {attempt_dir}",
+                env=env,
+            )
+            last_error = result.stderr or result.stdout
+            artifact = await environment.exec(f"test -f {attempt_dir}/result.json && cat {attempt_dir}/result.json || true")
+            try:
+                result_class = json.loads(artifact.stdout).get("resultClass")
+            except (ValueError, TypeError):
+                result_class = "ERRORED_INFRA" if result.return_code != 0 else "FAILED_AGENT"
+            if result.return_code == 0 or result_class != "ERRORED_INFRA" or attempt > self.infra_retries:
+                await environment.exec(f"cp -f {attempt_dir}/* /logs/agent/ 2>/dev/null || true")
+                break
         if result.return_code != 0:
-            raise RuntimeError(f"cindy-headless failed: {result.stderr or result.stdout}")
+            self._batch_failures += 1
+            raise RuntimeError(f"cindy-headless failed: {last_error}")
 
     @override
     def populate_context_post_run(self, context: AgentContext) -> None:
@@ -112,3 +156,5 @@ class CindyHeadlessAgent(BaseAgent):
         if result_path.is_file():
             result = json.loads(result_path.read_text(encoding="utf-8"))
             context.metadata = {"cindy_headless": result}
+            usage = json.loads(usage_path.read_text(encoding="utf-8")).get("normalizedUsage", {}) if usage_path.is_file() else {}
+            self._batch_cost_usd += float(usage.get("costUsd") or 0)
