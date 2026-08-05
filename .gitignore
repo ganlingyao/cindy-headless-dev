@@ -46,6 +46,10 @@ apps/desktop/resources/cindy-updater.exe
 # 实体文件按 tools/<kind>/latest.json 的 pin 下载，不进 Git/LFS。
 apps/claude-code-bin/
 apps/codex-bin/
+apps/cindy-headless/bundle/linux-x64/bin/claude
+apps/cindy-headless/bundle/linux-x64/bin/codex
+apps/cindy-headless/.cache/
+apps/cindy-headless/release/
 apps/pi-bin/
 apps/ripgrep-bin/
 # Android platform-tools 的二进制同理：Windows 打包前按 source.properties 的 pin
@@ -69,6 +73,9 @@ pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 downloads/
+.cindy-headless/
+.cindy-headless.json
+apps/cindy-headless/config.local.json
 # CODEX_HOME：包含 auth.json 与本机 skill symlink。
 apps/desktop/codex-home/
 # .cindy：本地私人配置与知识库，不入仓。

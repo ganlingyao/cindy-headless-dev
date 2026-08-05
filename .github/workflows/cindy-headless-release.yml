@@ -1,0 +1,89 @@
+name: Cindy Headless release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'cindy-headless-v*'
+
+permissions:
+  contents: read
+
+env:
+  XDT_SKIP_AGENT_BIN_INSTALL: '1'
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+  NODE_OPTIONS: '--max-old-space-size=4096'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate tag version
+        if: startsWith(github.ref, 'refs/tags/cindy-headless-v')
+        run: |
+          version="${GITHUB_REF_NAME#cindy-headless-v}"
+          package_version="$(node -p "require('./apps/cindy-headless/package.json').version")"
+          test "${version}" = "${package_version}" || {
+            echo "Tag version ${version} does not match package version ${package_version}" >&2
+            exit 1
+          }
+
+      - name: Verify source runtime
+        run: |
+          npm --prefix apps/cindy-headless run typecheck
+          npm --prefix apps/cindy-headless test -- --run
+          npm --prefix apps/cindy-headless run build
+
+      - name: Download and verify pinned Agent runtimes
+        run: npm --prefix apps/cindy-headless run ensure:binaries
+
+      - name: Build and verify Linux bundle
+        env:
+          CINDY_CLAUDE_BINARY: ${{ github.workspace }}/apps/cindy-headless/.cache/bin/linux-x64/claude
+          CINDY_CODEX_BINARY: ${{ github.workspace }}/apps/cindy-headless/.cache/bin/linux-x64/codex
+        run: |
+          npm --prefix apps/cindy-headless run bundle:linux
+          npm --prefix apps/cindy-headless run verify:bundle
+
+      - name: Verify portable distribution
+        run: npm --prefix apps/cindy-headless run test:distribution
+
+      - name: Build public runtime package
+        run: |
+          npm --prefix apps/cindy-headless run package:runtime
+          cd apps/cindy-headless/release
+          sha256sum --check SHA256SUMS
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cindy-headless-linux-x64-runtime
+          path: |
+            apps/cindy-headless/release/cindy-headless-linux-x64-runtime-*.tar.gz
+            apps/cindy-headless/release/SHA256SUMS
+            apps/cindy-headless/release/bundle-manifest.json
+            apps/cindy-headless/release/release-manifest.json
+          if-no-files-found: error

@@ -1,0 +1,32 @@
+job_name: cindy-headless-hello-world-v6
+jobs_dir: D:/Tools/Harbor/jobs/cindy-headless-hello-world
+debug: true
+n_concurrent_trials: 1
+agents:
+  - import_path: benchmarks.harbor.cindy_headless_agent:CindyHeadlessAgent
+    model_name: anthropic/claude-sonnet-4-6
+    kwargs:
+      bundle_dir: D:/Work/cindy-headless-issue-127/apps/cindy-headless/bundle/linux-x64
+      profile_path: D:/Work/cindy-headless-issue-127/apps/cindy-headless/profiles/cindy-production-claude/profile.example.json
+      version: 0.3.0
+      benchmark: terminal-bench/terminal-bench-2-1
+      benchmark_revision: "6"
+      run_id: example-run-freeze-before-execution
+      manifest_digest: 751f737c9a431a52e51e52263ec416ce050778ad855e5bd240cc849029f3831a
+      infra_retries: 1
+      max_cost_usd: 25
+      stop_after_failures: 5
+    env:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
+      CINDY_HEADLESS_API_KEY: ${CINDY_HEADLESS_API_KEY}
+      CINDY_HEADLESS_BASE_URL: ${CINDY_HEADLESS_BASE_URL}
+    include_logs:
+      - identity.json
+      - config.json
+      - trace.jsonl
+      - stderr.log
+      - usage.json
+      - result.json
+tasks:
+  - path: D:/Tools/Harbor/tasks/hello-world
