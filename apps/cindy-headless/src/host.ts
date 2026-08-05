@@ -139,6 +139,36 @@ export function extractProviderUsage(events: AgentEvent[], agentBackend: AgentKi
       },
     };
   }
+  if (!raw) {
+    const byRequest = new Map<string, Record<string, unknown>>();
+    for (const event of events) {
+      const requestId = typeof event.agentMeta?.requestId === 'string' ? event.agentMeta.requestId : undefined;
+      const eventUsage = event.agentMeta?.usage;
+      if (requestId && eventUsage && typeof eventUsage === 'object') byRequest.set(requestId, eventUsage as Record<string, unknown>);
+    }
+    const sum = (key: string): number => [...byRequest.values()].reduce((total, usage) => total + (typeof usage[key] === 'number' ? usage[key] as number : 0), 0);
+    const terminal = [...events].reverse().find((event) => event.type === 'status' && event.data && typeof event.data === 'object' && (event.data as Record<string, unknown>).isRunning === false);
+    const terminalData = terminal?.data as Record<string, unknown> | undefined;
+    const inputTokens = sum('inputTokens');
+    const tokenUsage = typeof terminalData?.tokenUsage === 'number' ? terminalData.tokenUsage : inputTokens;
+    const reconstructed = {
+      input_tokens: inputTokens,
+      cache_read_input_tokens: sum('cacheReadInputTokens'),
+      cache_creation_input_tokens: sum('cacheCreationInputTokens'),
+      output_tokens: Math.max(0, tokenUsage - inputTokens),
+      reconstructed_from: 'agentMeta+terminalStatus',
+    };
+    return {
+      rawProviderUsage: reconstructed,
+      normalizedUsage: {
+        inputTokens: reconstructed.input_tokens,
+        cacheReadTokens: reconstructed.cache_read_input_tokens,
+        cacheCreationTokens: reconstructed.cache_creation_input_tokens,
+        outputTokens: reconstructed.output_tokens,
+        costUsd: typeof terminalData?.costUsd === 'number' ? terminalData.costUsd : 0,
+      },
+    };
+  }
   return {
     rawProviderUsage: raw,
     normalizedUsage: {
