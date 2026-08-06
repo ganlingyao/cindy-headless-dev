@@ -24,6 +24,21 @@ and forces UTF-8 output. For a
 formal run, replace the example manifest digest with the exact `manifestDigest`
 emitted by `cindy-headless-eval plan` before starting Harbor; never hand-edit it.
 
+For a custom multi-task Harbor YAML, keep credentials out of the YAML and run it
+through the wrapper rather than invoking `harbor run` directly:
+
+```powershell
+$env:CINDY_HEADLESS_CONFIG_FILE = 'D:\secure\cindy-headless-config.json'
+./run-smoke.ps1 -Config D:\benchmarks\terminal-three.yaml -JobName terminal-three-20260806
+```
+
+The wrapper resolves the same local configuration candidates as Cindy Headless,
+including `CINDY_HEADLESS_CONFIG_FILE`, and collects results from the custom YAML's
+declared `jobs_dir`. The configuration file stays on the host; only the resolved
+gateway values are injected into the task container. Do not use an unrelated
+`OPENAI_API_KEY` or change the endpoint as a fallback when the configured gateway
+cannot be found. Stop the run and fix the configuration path instead.
+
 The example job uses the parity-tested profile under `apps/cindy-headless/profiles`. The adapter uploads the whole profile directory so relative prompt files remain resolvable. Freeze the exact model, endpoint route, prompt digest, selected Agent binary version, Cindy commit, and bundle digest before a scored run. Claude profiles use the pinned Claude binary. Codex profiles use the pinned Codex app-server binary and accept either the unified gateway API key or `kwargs.codex_home_dir` pointing at an explicit isolated home. Secrets must not be written into the profile, bundle, repository, or result artifacts.
 ## Evaluation controls
 
