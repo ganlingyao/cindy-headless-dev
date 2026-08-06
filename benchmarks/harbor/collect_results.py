@@ -17,7 +17,9 @@ def collect(job_dir: Path) -> List[Dict]:
         usage_status = usage_artifact.get("usageStatus", "MISSING")
         harbor_result_path = trial_dir / "result.json"
         harbor_result = json.loads(harbor_result_path.read_text(encoding="utf-8")) if harbor_result_path.is_file() else {}
-        reward = harbor_result.get("verifier_result", {}).get("rewards", {}).get("reward")
+        verifier_result = harbor_result.get("verifier_result") or {}
+        rewards = verifier_result.get("rewards") or {}
+        reward = rewards.get("reward")
         task_id = result.get("taskId") or identity.get("taskId")
         if not task_id or task_id == "unknown":
             task_id = trial_dir.name.split("__", 1)[0]
