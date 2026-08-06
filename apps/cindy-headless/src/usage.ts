@@ -1,5 +1,6 @@
 export const USAGE_SCHEMA_VERSION = 2 as const;
 export type UsageStatus = 'COMPLETE' | 'PARTIAL' | 'MISSING';
+export type UsageCompleteness = 'exact' | 'lower-bound' | 'incomplete';
 
 export interface NormalizedUsage {
   inputTokens: number;
@@ -14,6 +15,7 @@ export interface UsageArtifact {
   rawProviderUsage: Record<string, unknown> | null;
   normalizedUsage: NormalizedUsage;
   usageStatus: UsageStatus;
+  usageCompleteness: UsageCompleteness;
   usageSource: string[];
   missingFields: string[];
   termination: string | null;
@@ -31,6 +33,7 @@ export function createUsageArtifact(input: {
   normalizedUsage: NormalizedUsage;
   sessionSnapshot: UsageArtifact['sessionSnapshot'];
   usageStatus?: UsageStatus;
+  usageCompleteness?: UsageCompleteness;
   usageSource?: string[];
   missingFields?: string[];
   termination?: string | null;
@@ -40,6 +43,7 @@ export function createUsageArtifact(input: {
     ...input,
     schemaVersion: USAGE_SCHEMA_VERSION,
     usageStatus: input.usageStatus ?? 'COMPLETE',
+    usageCompleteness: input.usageCompleteness ?? (input.usageStatus === 'PARTIAL' ? 'lower-bound' : input.usageStatus === 'MISSING' ? 'incomplete' : 'exact'),
     usageSource: input.usageSource ?? ['provider'],
     missingFields: input.missingFields ?? [],
     termination: input.termination ?? null,

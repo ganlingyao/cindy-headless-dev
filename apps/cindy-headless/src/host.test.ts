@@ -9,6 +9,7 @@ describe('Headless result classification', () => {
   it('keeps deadline and authentication failures distinct', () => {
     expect(classifyFailure('HEADLESS_DEADLINE_EXCEEDED', undefined, true)).toBe('valid-deadline-killed');
     expect(classifyFailure('401 unauthorized', undefined, false)).toBe('infra-invalid-auth');
+    expect(classifyFailure('stream disconnected before completion', undefined, false)).toBe('infra-invalid-provider');
   });
 
   it('normalizes provider usage without double-counting cache tokens', () => {

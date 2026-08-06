@@ -33,6 +33,7 @@ describe('benchmark plan', () => {
     expect(summary.resultClasses.FAILED_AGENT).toBe(1);
     expect(summary.upstreamProviders.anthropic).toBe(1);
     expect(summary.totalDurationMs).toBe(12);
+    expect(summary.usageCompleteness).toEqual({ exact: 0, 'lower-bound': 0, incomplete: 5 });
   });
   it('rejects manifests that do not define exactly two paired arms', () => expect(() => validatePairedManifest(validateManifest({ ...manifest, variants: [{ id: 'only', supportedModelIds: ['model-1'] }] }))).toThrow(/exactly two/));
   it('creates a reproducible interleaved schedule and enforces retry/stop policy', () => {

@@ -40,6 +40,8 @@ agents:
       infra_retries: 1
       max_cost_usd: 5
       stop_after_failures: 2
+      headless_timeout_sec: 840
+      headless_grace_sec: 60
     env:
       CINDY_HEADLESS_API_KEY: \${CINDY_HEADLESS_API_KEY}
       CINDY_HEADLESS_BASE_URL: \${CINDY_HEADLESS_BASE_URL}

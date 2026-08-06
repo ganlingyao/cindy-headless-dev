@@ -52,6 +52,8 @@ The benchmark manifest supports deterministic scheduling and execution policy:
 
 Each generated cell has a stable `cellId`. The Headless result and identity artifacts also include `runId`, `cellId`, `attemptId`, `manifestDigest`, the standardized result class, retry relationship, and runtime/provider version fields. Secrets and prompt bodies are intentionally excluded.
 
+The Harbor adapter defaults to an 840-second Headless deadline with a 60-second grace period before Harbor's usual 900-second task deadline. Headless aborts and closes the session, flushes artifacts, and returns before the outer container deadline. Keep the outer benchmark timeout at least as large as the sum of these two values.
+
 Usage artifacts use schema 2. `usageStatus` is `COMPLETE`, `PARTIAL` or `MISSING`; timeout and externally killed containers may not have a final provider usage event. The collector preserves this status, reports missing fields as `null`, and records `usageSource`, `termination`, `observedTokenTotal` and `missingUsageFields`. It never converts unknown usage into an exact zero.
 
 ## Post-run report

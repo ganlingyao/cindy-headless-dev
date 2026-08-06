@@ -4,7 +4,7 @@ Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-c
 
 ## Quick start
 
-Authorized internal users can download the current package from the private [Cindy Headless v0.1.5 release](https://github.com/ganlingyao/cindy-headless-releases/releases/tag/cindy-headless-v0.1.5). The dedicated release repository contains both runtime and access-controlled full packages. Verify the selected archive with the attached `SHA256SUMS` before extraction.
+Authorized internal users can download the current package from the private [Cindy Headless v0.1.6 release](https://github.com/ganlingyao/cindy-headless-releases/releases/tag/cindy-headless-v0.1.6). The dedicated release repository contains both runtime and access-controlled full packages. Verify the selected archive with the attached `SHA256SUMS` before extraction.
 
 From a source checkout on Windows:
 
@@ -111,7 +111,7 @@ Run a local task:
 node apps/cindy-headless/dist/cli.cjs run --profile <profile.json> --task "Inspect the repository and report the result" --working-dir . --output-dir results
 ```
 
-The output directory contains identity, config, trace, usage and result artifacts. Prompt bodies and secrets are excluded. Usage artifacts use schema 2 and explicitly report `COMPLETE`, `PARTIAL` or `MISSING`; timeout results must not be interpreted as exact zero token or cost.
+The output directory contains identity, config, trace, usage and result artifacts. Prompt bodies and secrets are excluded. Usage artifacts use schema 2 and explicitly report `COMPLETE`, `PARTIAL` or `MISSING`; timeout results must not be interpreted as exact zero token or cost. They also expose `usageCompleteness`: `exact` for a complete provider event, `lower-bound` for observed partial usage, and `incomplete` when no trustworthy count exists. Reports count these categories separately. A disconnected provider stream is infrastructure failure; it is not converted into an agent failure or an estimated token count.
 
 ## Harbor smoke test
 

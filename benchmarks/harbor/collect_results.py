@@ -15,6 +15,11 @@ def collect(job_dir: Path) -> List[Dict]:
         usage_artifact = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.is_file() else {}
         usage = usage_artifact.get("normalizedUsage", {})
         usage_status = usage_artifact.get("usageStatus", "MISSING")
+        usage_completeness = usage_artifact.get("usageCompleteness") or {
+            "COMPLETE": "exact",
+            "PARTIAL": "lower-bound",
+            "MISSING": "incomplete",
+        }.get(usage_status, "incomplete")
         harbor_result_path = trial_dir / "result.json"
         harbor_result = json.loads(harbor_result_path.read_text(encoding="utf-8")) if harbor_result_path.is_file() else {}
         verifier_result = harbor_result.get("verifier_result") or {}
@@ -39,6 +44,7 @@ def collect(job_dir: Path) -> List[Dict]:
             "cacheTokens": usage.get("cacheReadTokens") if usage_status != "MISSING" else None,
             "outputTokens": usage.get("outputTokens") if usage_status != "MISSING" else None,
             "usageStatus": usage_status,
+            "usageCompleteness": usage_completeness,
             "usageSource": usage_artifact.get("usageSource", []),
             "missingUsageFields": usage_artifact.get("missingFields", []),
             "termination": usage_artifact.get("termination"),

@@ -16,6 +16,8 @@ agents:
       infra_retries: 1
       max_cost_usd: 25
       stop_after_failures: 5
+      headless_timeout_sec: 840
+      headless_grace_sec: 60
     env:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}

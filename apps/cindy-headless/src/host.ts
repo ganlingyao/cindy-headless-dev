@@ -111,7 +111,7 @@ export function classifyFailure(error: string | undefined, terminalError: AgentE
   const text = `${error ?? ''} ${terminalError ? JSON.stringify(terminalError.data) : ''}`.toLowerCase();
   if (/auth|api.?key|unauthorized|401/.test(text)) return 'infra-invalid-auth';
   if (/model.*(not found|unsupported)|route|requested.*effective/.test(text)) return 'infra-invalid-route';
-  if (/rate.?limit|overload|provider|network|econn|timeout/.test(text)) return 'infra-invalid-provider';
+  if (/rate.?limit|overload|provider|network|econn|timeout|stream disconnected|broken pipe|connection reset|connection aborted|socket hang up/.test(text)) return 'infra-invalid-provider';
   return 'valid-agent-error';
 }
 
@@ -249,6 +249,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const hasObservedUsage = providerUsage.rawProviderUsage !== null || usage.tokenUsage > 0;
   const reconstructed = providerUsage.rawProviderUsage && typeof providerUsage.rawProviderUsage.reconstructed_from === 'string';
   const usageStatus = deadlineKilled ? (hasObservedUsage ? 'PARTIAL' : 'MISSING') : (providerUsage.rawProviderUsage && !reconstructed ? 'COMPLETE' : hasObservedUsage ? 'PARTIAL' : 'MISSING');
+  const usageCompleteness = usageStatus === 'COMPLETE' ? 'exact' : usageStatus === 'PARTIAL' ? 'lower-bound' : 'incomplete';
   const usageSource = [providerUsage.rawProviderUsage ? 'provider-events' : '', usage.tokenUsage > 0 ? 'session-snapshot' : ''].filter(Boolean);
   const missingFields = usageStatus === 'COMPLETE' ? [] : ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens', 'costUsd'].filter((field) => providerUsage.normalizedUsage[field as keyof typeof providerUsage.normalizedUsage] === 0);
   const status = classifyFailure(error, terminalError, deadlineKilled);
@@ -273,7 +274,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
     writeFile(path.join(absoluteOutputDir, 'identity.json'), JSON.stringify(identity, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'trace.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''), 'utf8'),
-    writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage, usageStatus, usageSource, missingFields, termination: deadlineKilled ? 'HEADLESS_DEADLINE' : null, observedTokenTotal: usage.tokenUsage > 0 ? usage.tokenUsage : null }), null, 2) + '\n', 'utf8'),
+    writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage, usageStatus, usageCompleteness, usageSource, missingFields, termination: deadlineKilled ? 'HEADLESS_DEADLINE' : null, observedTokenTotal: usage.tokenUsage > 0 ? usage.tokenUsage : null }), null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8'),
   ]);
   return { ...result, usage };

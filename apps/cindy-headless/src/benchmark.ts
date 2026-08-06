@@ -46,6 +46,8 @@ export interface PairedRunResult {
   resultClass?: 'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK';
   durationMs?: number;
   upstreamProvider?: string;
+  usageStatus?: 'COMPLETE' | 'PARTIAL' | 'MISSING';
+  usageCompleteness?: 'exact' | 'lower-bound' | 'incomplete';
 }
 
 export interface EvaluationReport {
@@ -60,6 +62,7 @@ export interface EvaluationReport {
   unsupported: Array<{ variantId: string; modelId: string; reason: string }>;
   totals: { costUsd: number; inputTokens: number; cacheTokens: number; outputTokens: number; durationMs: number };
   upstreamProviders: Record<string, number>;
+  usageCompleteness: Record<'exact' | 'lower-bound' | 'incomplete', number>;
 }
 
 export interface PairedSummary {
@@ -79,6 +82,7 @@ export interface PairedSummary {
   resultClasses: Record<'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK', number>;
   totalDurationMs: number;
   upstreamProviders: Record<string, number>;
+  usageCompleteness: Record<'exact' | 'lower-bound' | 'incomplete', number>;
   confidenceIntervals: Record<string, { successes: number; trials: number; lower95: number; upper95: number }>;
 }
 
@@ -185,6 +189,7 @@ export function summarizePairedResults(results: PairedRunResult[]): PairedSummar
   const resultClasses: PairedSummary['resultClasses'] = { PASSED: 0, FAILED_AGENT: 0, ERRORED_INFRA: 0, INVALID_TASK: 0 };
   const upstreamProviders: Record<string, number> = {};
   const confidenceIntervals: PairedSummary['confidenceIntervals'] = {};
+  const usageCompleteness: PairedSummary['usageCompleteness'] = { exact: 0, 'lower-bound': 0, incomplete: 0 };
   for (const result of results) {
     if (!Number.isFinite(result.reward)) throw new Error(`invalid reward for ${result.taskId}`);
     const key = `${result.taskId}:${result.modelId}:${result.repetition}`;
@@ -204,6 +209,8 @@ export function summarizePairedResults(results: PairedRunResult[]): PairedSummar
     a.trials += 1; a.passed += passed(result) ? 1 : 0; a.passRate = a.passed / a.trials; byAgent[agent] = a;
     if (result.resultClass) resultClasses[result.resultClass] += 1;
     if (result.upstreamProvider) upstreamProviders[result.upstreamProvider] = (upstreamProviders[result.upstreamProvider] ?? 0) + 1;
+    const completeness = result.usageCompleteness ?? (result.usageStatus === 'COMPLETE' ? 'exact' : result.usageStatus === 'PARTIAL' ? 'lower-bound' : 'incomplete');
+    usageCompleteness[completeness] += 1;
   }
   let completePairCount = 0;
   let bothPass = 0;
@@ -222,7 +229,7 @@ export function summarizePairedResults(results: PairedRunResult[]): PairedSummar
     else secondArmOnlyPass += 1;
   }
   for (const [agent, stats] of Object.entries(byAgent)) confidenceIntervals[agent] = { successes: stats.passed, trials: stats.trials, ...wilson(stats.passed, stats.trials) };
-  return { pairCount: pairs.size, completePairCount, incompletePairCount: pairs.size - completePairCount, bothPass, bothFail, firstArmOnlyPass, secondArmOnlyPass, totalCostUsd, totalInputTokens, totalCacheTokens, totalOutputTokens, byBenchmark, byAgent, resultClasses, totalDurationMs, upstreamProviders, confidenceIntervals };
+  return { pairCount: pairs.size, completePairCount, incompletePairCount: pairs.size - completePairCount, bothPass, bothFail, firstArmOnlyPass, secondArmOnlyPass, totalCostUsd, totalInputTokens, totalCacheTokens, totalOutputTokens, byBenchmark, byAgent, resultClasses, totalDurationMs, upstreamProviders, usageCompleteness, confidenceIntervals };
 }
 
 export function expandPlan(manifest: BenchmarkManifest): { schemaVersion: 1; manifestDigest: string; cells: BenchmarkCell[] } {
@@ -254,6 +261,7 @@ export function createEvaluationReport(manifest: BenchmarkManifest, results: Pai
     unsupported,
     totals: { costUsd: summary.totalCostUsd, inputTokens: summary.totalInputTokens, cacheTokens: summary.totalCacheTokens, outputTokens: summary.totalOutputTokens, durationMs: summary.totalDurationMs },
     upstreamProviders: summary.upstreamProviders,
+    usageCompleteness: summary.usageCompleteness,
   };
 }
 

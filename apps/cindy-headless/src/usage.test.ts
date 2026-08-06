@@ -10,6 +10,7 @@ describe('usage artifact schema', () => {
     });
     expect(artifact.schemaVersion).toBe(USAGE_SCHEMA_VERSION);
     expect(artifact.usageStatus).toBe('COMPLETE');
+    expect(artifact.usageCompleteness).toBe('exact');
     expect(artifact.normalizedUsage).toEqual({ inputTokens: 3, cacheReadTokens: 10, cacheCreationTokens: 5, outputTokens: 7, costUsd: 0.25 });
     expect(artifact.sessionSnapshot.contextTokens).toBe(18);
   });
@@ -26,6 +27,7 @@ describe('usage artifact schema', () => {
       observedTokenTotal: 128,
     });
     expect(artifact.usageStatus).toBe('PARTIAL');
+    expect(artifact.usageCompleteness).toBe('lower-bound');
     expect(artifact.observedTokenTotal).toBe(128);
     expect(artifact.missingFields).toContain('costUsd');
   });

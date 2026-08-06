@@ -21,7 +21,7 @@ class CindyHeadlessAgent(BaseAgent):
         bundle_dir: str,
         profile_path: str,
         codex_home_dir: str | None = None,
-        version: str = "0.1.5",
+        version: str = "0.1.6",
         benchmark: str | None = None,
         benchmark_revision: str | None = None,
         run_id: str | None = None,
@@ -29,6 +29,8 @@ class CindyHeadlessAgent(BaseAgent):
         infra_retries: int = 1,
         max_cost_usd: float | None = None,
         stop_after_failures: int | None = None,
+        headless_timeout_sec: float = 840.0,
+        headless_grace_sec: float = 60.0,
         *args,
         **kwargs,
     ):
@@ -46,6 +48,10 @@ class CindyHeadlessAgent(BaseAgent):
         self.infra_retries = max(0, min(int(infra_retries), 1))
         self.max_cost_usd = max_cost_usd
         self.stop_after_failures = stop_after_failures
+        self.headless_timeout_sec = float(headless_timeout_sec)
+        self.headless_grace_sec = float(headless_grace_sec)
+        if self.headless_timeout_sec <= 0 or self.headless_grace_sec < 0:
+            raise ValueError("headless timeout must be positive and grace must be non-negative")
         self._batch_cost_usd = 0.0
         self._batch_failures = 0
         if not self.bundle_dir.is_dir():
@@ -136,8 +142,9 @@ class CindyHeadlessAgent(BaseAgent):
                 env["CINDY_REPLACES_ATTEMPT_ID"] = f"{attempt_prefix}-attempt-1"
             result = await environment.exec(
                 "mkdir -p " + attempt_dir + "; /opt/cindy-headless/bin/node /opt/cindy-headless/dist/cli.cjs run "
-                f"--profile {container_profile} --working-dir /app --output-dir {attempt_dir}",
+                f"--profile {container_profile} --working-dir /app --output-dir {attempt_dir} --timeout-ms {int(self.headless_timeout_sec * 1000)}",
                 env=env,
+                timeout_sec=self.headless_timeout_sec + self.headless_grace_sec,
             )
             last_error = result.stderr or result.stdout
             artifact = await environment.exec(f"test -f {attempt_dir}/result.json && cat {attempt_dir}/result.json || true")
