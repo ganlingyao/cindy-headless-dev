@@ -10,6 +10,7 @@ describe('Headless result classification', () => {
     expect(classifyFailure('HEADLESS_DEADLINE_EXCEEDED', undefined, true)).toBe('valid-deadline-killed');
     expect(classifyFailure('401 unauthorized', undefined, false)).toBe('infra-invalid-auth');
     expect(classifyFailure('stream disconnected before completion', undefined, false)).toBe('infra-invalid-provider');
+    expect(classifyFailure('HEADLESS_TERMINATED_SIGTERM', undefined, false)).toBe('infra-terminated-signal');
   });
 
   it('normalizes provider usage without double-counting cache tokens', () => {

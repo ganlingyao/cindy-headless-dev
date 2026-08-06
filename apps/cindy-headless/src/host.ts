@@ -107,6 +107,7 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workin
 
 export function classifyFailure(error: string | undefined, terminalError: AgentEvent | undefined, deadlineKilled: boolean): string {
   if (deadlineKilled) return 'valid-deadline-killed';
+  if (error?.startsWith('HEADLESS_TERMINATED_')) return 'infra-terminated-signal';
   if (!error && !terminalError) return 'valid-completed';
   const text = `${error ?? ''} ${terminalError ? JSON.stringify(terminalError.data) : ''}`.toLowerCase();
   if (/auth|api.?key|unauthorized|401/.test(text)) return 'infra-invalid-auth';
@@ -216,8 +217,21 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const startedAt = Date.now();
   let error: string | undefined;
   let deadlineKilled = false;
+  let terminationSignal: NodeJS.Signals | undefined;
   let terminalError: AgentEvent | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let rejectTermination!: (cause: Error) => void;
+  const termination = new Promise<void>((_, reject) => { rejectTermination = reject; });
+  const terminate = (signal: NodeJS.Signals) => {
+    if (terminationSignal) return;
+    terminationSignal = signal;
+    rejectTermination(new Error(`HEADLESS_TERMINATED_${signal}`));
+    void session?.abort().catch(() => undefined);
+  };
+  const onSigterm = () => terminate('SIGTERM');
+  const onSigint = () => terminate('SIGINT');
+  process.once('SIGTERM', onSigterm);
+  process.once('SIGINT', onSigint);
   const projectContext = await readProjectContext(absoluteWorkingDir, profile.projectContext);
   const stateDir = path.resolve(process.env.CINDY_HEADLESS_STATE_DIR ?? path.join(absoluteOutputDir, 'state'));
   try {
@@ -230,15 +244,17 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
     for (const turn of turns.length > 0 ? turns : [task]) {
       terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
       await session.send(turn);
-      await Promise.race([terminal, new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('HEADLESS_DEADLINE_EXCEEDED')), timeoutMs); })]);
+      await Promise.race([terminal, termination, new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('HEADLESS_DEADLINE_EXCEEDED')), timeoutMs); })]);
       if (timer) { clearTimeout(timer); timer = undefined; }
     }
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
     deadlineKilled = error === 'HEADLESS_DEADLINE_EXCEEDED';
-    if (deadlineKilled && session) await session.abort().catch(() => undefined);
+    if ((deadlineKilled || terminationSignal) && session) await session.abort().catch(() => undefined);
   } finally {
     if (timer) clearTimeout(timer);
+    process.off('SIGTERM', onSigterm);
+    process.off('SIGINT', onSigint);
   }
   // Claude may emit the final `done` event while closing the SDK session. Flush
   // it before extracting provider usage so Harbor receives real token counts.
@@ -274,7 +290,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
     writeFile(path.join(absoluteOutputDir, 'identity.json'), JSON.stringify(identity, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'trace.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''), 'utf8'),
-    writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage, usageStatus, usageCompleteness, usageSource, missingFields, termination: deadlineKilled ? 'HEADLESS_DEADLINE' : null, observedTokenTotal: usage.tokenUsage > 0 ? usage.tokenUsage : null }), null, 2) + '\n', 'utf8'),
+    writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage, usageStatus, usageCompleteness, usageSource, missingFields, termination: deadlineKilled ? 'HEADLESS_DEADLINE' : terminationSignal ?? null, observedTokenTotal: usage.tokenUsage > 0 ? usage.tokenUsage : null }), null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8'),
   ]);
   return { ...result, usage };

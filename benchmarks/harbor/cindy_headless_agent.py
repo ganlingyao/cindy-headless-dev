@@ -21,7 +21,7 @@ class CindyHeadlessAgent(BaseAgent):
         bundle_dir: str,
         profile_path: str,
         codex_home_dir: str | None = None,
-        version: str = "0.1.6",
+        version: str = "0.1.7",
         benchmark: str | None = None,
         benchmark_revision: str | None = None,
         run_id: str | None = None,
