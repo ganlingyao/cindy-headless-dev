@@ -38,25 +38,34 @@ try {
   await execFileAsync('tar', ['-xzf', fullAsset, '-C', path.basename(temporary)], { cwd: releaseDir });
   const root = path.join(temporary, 'cindy-headless');
   const bundle = JSON.parse(await readFile(path.join(root, 'bundle-manifest.json'), 'utf8'));
+  assert.equal(await digest(path.join(root, 'bin', 'node')), bundle.nodeBinaryDigest, 'Node binary digest mismatch');
   assert.equal(await digest(path.join(root, 'bin', 'claude')), bundle.claudeBinaryDigest, 'Claude binary digest mismatch');
   assert.equal(await digest(path.join(root, 'bin', 'codex')), bundle.codexBinaryDigest, 'Codex binary digest mismatch');
   assert.ok((await stat(path.join(root, 'bin', 'claude'))).size > 0);
   assert.ok((await stat(path.join(root, 'bin', 'codex'))).size > 0);
+  assert.ok((await stat(path.join(root, 'bin', 'node'))).size > 0);
   await readFile(path.join(root, 'VENDOR-BINARIES-NOTICE.txt'));
   await readFile(path.join(root, 'prepare-binaries.sh'));
-  const { stdout } = await execFileAsync('node', [path.join(root, 'dist', 'cli.cjs'), 'version']);
+  let cliPath = path.join(root, 'dist', 'cli.cjs');
+  if (process.platform === 'win32') {
+    const { stdout: linuxRoot } = await execFileAsync('wsl.exe', ['-e', 'wslpath', '-a', root], { timeout: 30_000 });
+    cliPath = path.posix.join(linuxRoot.trim(), 'dist/cli.cjs');
+  }
+  const { stdout } = await runBinary('node', [cliPath, 'version']);
   const version = JSON.parse(stdout);
   assert.equal(version.name, 'cindy-headless');
   assert.equal(version.version, release.version);
-  const runBinary = async (name, args) => {
+  async function runBinary(name, args) {
     if (process.platform !== 'win32') return execFileAsync(path.join(root, 'bin', name), args, { timeout: 30_000 });
     const { stdout: linuxRoot } = await execFileAsync('wsl.exe', ['-e', 'wslpath', '-a', root], { timeout: 30_000 });
     return execFileAsync('wsl.exe', ['-e', path.posix.join(linuxRoot.trim(), `bin/${name}`), ...args], { timeout: 30_000 });
-  };
+  }
+  const nodeVersion = await runBinary('node', ['--version']);
   const claudeVersion = await runBinary('claude', ['--version']);
   const codexVersion = await runBinary('codex', ['--version']);
   assert.match(`${claudeVersion.stdout} ${claudeVersion.stderr}`, new RegExp(bundle.claudeCodeVersion.replaceAll('.', '\\.')));
   assert.match(`${codexVersion.stdout} ${codexVersion.stderr}`, new RegExp(bundle.codexVersion.replaceAll('.', '\\.')));
+  assert.match(`${nodeVersion.stdout} ${nodeVersion.stderr}`, new RegExp(bundle.nodeVersion.replaceAll('.', '\\.')));
   await runBinary('codex', ['app-server', '--help']);
 
   async function scan(directory) {

@@ -8,7 +8,7 @@ agents:
     kwargs:
       bundle_dir: D:/Work/cindy-headless-issue-127/apps/cindy-headless/bundle/linux-x64
       profile_path: D:/Work/cindy-headless-issue-127/apps/cindy-headless/profiles/cindy-production-codex/profile.example.json
-      version: 0.1.3
+      version: 0.1.4
       benchmark: harbor/hello-world
       benchmark_revision: "local-v1"
       run_id: cindy-headless-codex-hello-world

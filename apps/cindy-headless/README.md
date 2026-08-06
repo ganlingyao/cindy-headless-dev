@@ -4,7 +4,7 @@ Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-c
 
 ## Quick start
 
-Authorized internal users can download the current package from the private [Cindy Headless v0.1.3 release](https://github.com/ganlingyao/cindy-headless-releases/releases/tag/cindy-headless-v0.1.3). The dedicated release repository contains both runtime and access-controlled full packages. Verify the selected archive with the attached `SHA256SUMS` before extraction.
+Authorized internal users can download the current package from the private [Cindy Headless v0.1.4 release](https://github.com/ganlingyao/cindy-headless-releases/releases/tag/cindy-headless-v0.1.4). The dedicated release repository contains both runtime and access-controlled full packages. Verify the selected archive with the attached `SHA256SUMS` before extraction.
 
 From a source checkout on Windows:
 

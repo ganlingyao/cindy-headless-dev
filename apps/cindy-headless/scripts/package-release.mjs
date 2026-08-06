@@ -36,6 +36,8 @@ const runtimeStage = path.join(releaseDir, '.runtime');
 const runtimeRoot = path.join(runtimeStage, 'cindy-headless');
 await mkdir(runtimeRoot, { recursive: true });
 await cp(bundleDist, path.join(runtimeRoot, 'dist'), { recursive: true });
+await mkdir(path.join(runtimeRoot, 'bin'), { recursive: true });
+await cp(path.join(bundleDir, 'bin', 'node'), path.join(runtimeRoot, 'bin', 'node'));
 for (const item of ['prompt.md', 'codex-prompt.md', 'bundle-manifest.json']) await cp(path.join(bundleDir, item), path.join(runtimeRoot, item), { recursive: true });
 await cp(path.join(appDir, 'profiles'), path.join(runtimeRoot, 'profiles'), { recursive: true });
 await cp(path.join(appDir, 'README.md'), path.join(runtimeRoot, 'README.md'));
@@ -52,7 +54,7 @@ for (const item of ['__init__.py', 'cindy_headless_agent.py', 'collect_results.p
   await cp(path.join(repoRoot, 'benchmarks', 'harbor', item), path.join(releaseHarbor, item));
 }
 await cp(path.join(repoRoot, 'benchmarks', 'harbor', 'tasks'), path.join(releaseHarbor, 'tasks'), { recursive: true });
-await writeFile(path.join(runtimeRoot, 'prepare-binaries.sh'), '#!/usr/bin/env sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nCINDY_HEADLESS_METADATA_ROOT="$ROOT" CINDY_HEADLESS_BINARY_CACHE="$ROOT/bin" node "$ROOT/scripts/ensure-agent-binaries.mjs"\n');
+await writeFile(path.join(runtimeRoot, 'prepare-binaries.sh'), '#!/usr/bin/env sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nCINDY_HEADLESS_METADATA_ROOT="$ROOT" CINDY_HEADLESS_BINARY_CACHE="$ROOT/bin" "$ROOT/bin/node" "$ROOT/scripts/ensure-agent-binaries.mjs"\n');
 await writeFile(path.join(runtimeRoot, 'prepare-binaries.ps1'), "$ErrorActionPreference = 'Stop'\n$root = $PSScriptRoot\n$env:CINDY_HEADLESS_METADATA_ROOT = $root\n$env:CINDY_HEADLESS_BINARY_CACHE = Join-Path $root 'bin'\nnode (Join-Path $root 'scripts\\ensure-agent-binaries.mjs')\n");
 const files = [await archive(`cindy-headless-linux-x64-runtime-${version}`, runtimeStage)];
 

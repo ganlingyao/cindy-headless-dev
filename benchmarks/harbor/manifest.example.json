@@ -2,19 +2,19 @@
   "schemaVersion": 1,
   "board": "same-model-harness",
   "dataset": {
-    "name": "terminal-bench/terminal-bench-2-1",
-    "revision": "6",
+    "name": "terminal-bench",
+    "revision": "2.0",
     "taskIds": ["replace-with-five-or-more-frozen-task-ids"]
   },
   "modelIds": ["claude-sonnet-4-6"],
   "repetitions": 1,
   "variants": [
-    { "id": "raw-claude-code", "supportedModelIds": ["claude-sonnet-4-6"] },
-    { "id": "cindy-production-claude", "supportedModelIds": ["claude-sonnet-4-6"] }
+    { "id": "cindy-production-claude", "supportedModelIds": ["claude-sonnet-4-6"] },
+    { "id": "cindy-no-compaction", "supportedModelIds": ["claude-sonnet-4-6"] }
   ],
   "seed": 127,
   "concurrency": 1,
-  "agentOrder": ["raw-claude-code", "cindy-production-claude"],
+  "agentOrder": ["cindy-production-claude", "cindy-no-compaction"],
   "runtime": {
     "timeoutMs": 900000,
     "cpu": 2,

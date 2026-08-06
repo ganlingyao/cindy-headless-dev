@@ -173,6 +173,10 @@ apps/mobile/e2e/visual-baselines/
 /dev-*.bat
 /dev-*.ps1
 
+# Cindy Headless generated runtime binaries are verified by bundle manifests
+# and distributed as release assets, never committed to the source repository.
+/apps/cindy-headless/bundle/linux-x64/bin/
+
 # worktree 回收豁免哨兵(会话工具生成,永不入仓)
 .worktree-keep
 
