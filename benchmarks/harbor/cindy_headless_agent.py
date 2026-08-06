@@ -21,7 +21,7 @@ class CindyHeadlessAgent(BaseAgent):
         bundle_dir: str,
         profile_path: str,
         codex_home_dir: str | None = None,
-        version: str = "0.1.4",
+        version: str = "0.1.5",
         benchmark: str | None = None,
         benchmark_revision: str | None = None,
         run_id: str | None = None,
@@ -160,15 +160,18 @@ class CindyHeadlessAgent(BaseAgent):
         result_path = self.logs_dir / "result.json"
         if usage_path.is_file():
             usage_artifact = json.loads(usage_path.read_text(encoding="utf-8"))
-            if usage_artifact.get("schemaVersion") != 1:
+            if usage_artifact.get("schemaVersion") != 2:
                 raise ValueError("unsupported cindy-headless usage schema")
             usage = usage_artifact["normalizedUsage"]
-            context.cost_usd = usage.get("costUsd")
-            context.n_input_tokens = usage.get("inputTokens", 0) + usage.get("cacheCreationTokens", 0) + usage.get("cacheReadTokens", 0)
-            context.n_cache_tokens = usage.get("cacheReadTokens", 0)
-            context.n_output_tokens = usage.get("outputTokens", 0)
+            if usage_artifact.get("usageStatus") == "COMPLETE":
+                context.cost_usd = usage.get("costUsd")
+            context.n_input_tokens = usage.get("inputTokens")
+            context.n_cache_tokens = usage.get("cacheReadTokens")
+            context.n_output_tokens = usage.get("outputTokens")
         if result_path.is_file():
             result = json.loads(result_path.read_text(encoding="utf-8"))
             context.metadata = {"cindy_headless": result}
-            usage = json.loads(usage_path.read_text(encoding="utf-8")).get("normalizedUsage", {}) if usage_path.is_file() else {}
-            self._batch_cost_usd += float(usage.get("costUsd") or 0)
+            usage_artifact = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.is_file() else {}
+            usage = usage_artifact.get("normalizedUsage", {})
+            if usage_artifact.get("usageStatus") == "COMPLETE":
+                self._batch_cost_usd += float(usage.get("costUsd") or 0)

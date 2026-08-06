@@ -37,6 +37,8 @@ The benchmark manifest supports deterministic scheduling and execution policy:
 
 Each generated cell has a stable `cellId`. The Headless result and identity artifacts also include `runId`, `cellId`, `attemptId`, `manifestDigest`, the standardized result class, retry relationship, and runtime/provider version fields. Secrets and prompt bodies are intentionally excluded.
 
+Usage artifacts use schema 2. `usageStatus` is `COMPLETE`, `PARTIAL` or `MISSING`; timeout and externally killed containers may not have a final provider usage event. The collector preserves this status, reports missing fields as `null`, and records `usageSource`, `termination`, `observedTokenTotal` and `missingUsageFields`. It never converts unknown usage into an exact zero.
+
 ## Post-run report
 
 After collecting the normalized `result.json` records into an array, generate the auditable report with:

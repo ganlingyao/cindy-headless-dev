@@ -128,6 +128,14 @@ export function extractProviderUsage(events: AgentEvent[], agentBackend: AgentKi
   const raw = data?.usage && typeof data.usage === 'object' ? data.usage as Record<string, unknown> : null;
   const number = (key: string): number => typeof raw?.[key] === 'number' ? raw[key] as number : 0;
   if (agentBackend === 'codex') {
+    if (!raw) {
+      const terminal = [...events].reverse().find((event) => event.type === 'status' && event.data && typeof event.data === 'object' && typeof (event.data as Record<string, unknown>).tokenUsage === 'number');
+      const tokenUsage = terminal?.data && typeof terminal.data === 'object' ? Number((terminal.data as Record<string, unknown>).tokenUsage ?? 0) : 0;
+      return {
+        rawProviderUsage: tokenUsage > 0 ? { tokenUsage, reconstructed_from: 'terminalStatus' } : null,
+        normalizedUsage: { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, costUsd: 0 },
+      };
+    }
     return {
       rawProviderUsage: raw,
       normalizedUsage: {
@@ -238,6 +246,11 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const usage = session?.getUsageSnapshot() ?? { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
   const providerUsage = extractProviderUsage(events, profile.agentBackend);
   if (providerUsage.normalizedUsage.costUsd === 0 && usage.costUsd > 0) providerUsage.normalizedUsage.costUsd = usage.costUsd;
+  const hasObservedUsage = providerUsage.rawProviderUsage !== null || usage.tokenUsage > 0;
+  const reconstructed = providerUsage.rawProviderUsage && typeof providerUsage.rawProviderUsage.reconstructed_from === 'string';
+  const usageStatus = deadlineKilled ? (hasObservedUsage ? 'PARTIAL' : 'MISSING') : (providerUsage.rawProviderUsage && !reconstructed ? 'COMPLETE' : hasObservedUsage ? 'PARTIAL' : 'MISSING');
+  const usageSource = [providerUsage.rawProviderUsage ? 'provider-events' : '', usage.tokenUsage > 0 ? 'session-snapshot' : ''].filter(Boolean);
+  const missingFields = usageStatus === 'COMPLETE' ? [] : ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens', 'costUsd'].filter((field) => providerUsage.normalizedUsage[field as keyof typeof providerUsage.normalizedUsage] === 0);
   const status = classifyFailure(error, terminalError, deadlineKilled);
   const reward = typeof process.env.CINDY_HEADLESS_REWARD === 'string' ? Number(process.env.CINDY_HEADLESS_REWARD) : null;
   const benchmark = process.env.CINDY_BENCHMARK ?? null;
@@ -260,7 +273,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
     writeFile(path.join(absoluteOutputDir, 'identity.json'), JSON.stringify(identity, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'trace.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''), 'utf8'),
-    writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage }), null, 2) + '\n', 'utf8'),
+    writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage, usageStatus, usageSource, missingFields, termination: deadlineKilled ? 'HEADLESS_DEADLINE' : null, observedTokenTotal: usage.tokenUsage > 0 ? usage.tokenUsage : null }), null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8'),
   ]);
   return { ...result, usage };

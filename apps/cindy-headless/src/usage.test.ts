@@ -9,7 +9,24 @@ describe('usage artifact schema', () => {
       sessionSnapshot: { tokenUsage: 20, contextTokens: 18, contextWindow: 1000, costUsd: 0.25 },
     });
     expect(artifact.schemaVersion).toBe(USAGE_SCHEMA_VERSION);
+    expect(artifact.usageStatus).toBe('COMPLETE');
     expect(artifact.normalizedUsage).toEqual({ inputTokens: 3, cacheReadTokens: 10, cacheCreationTokens: 5, outputTokens: 7, costUsd: 0.25 });
     expect(artifact.sessionSnapshot.contextTokens).toBe(18);
+  });
+
+  it('records incomplete usage without turning it into a precise zero', () => {
+    const artifact = createUsageArtifact({
+      rawProviderUsage: null,
+      normalizedUsage: { inputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, costUsd: 0 },
+      sessionSnapshot: { tokenUsage: 128, contextTokens: 128, contextWindow: 1000, costUsd: 0 },
+      usageStatus: 'PARTIAL',
+      usageSource: ['session-snapshot'],
+      missingFields: ['inputTokens', 'outputTokens', 'costUsd'],
+      termination: 'HEADLESS_DEADLINE',
+      observedTokenTotal: 128,
+    });
+    expect(artifact.usageStatus).toBe('PARTIAL');
+    expect(artifact.observedTokenTotal).toBe(128);
+    expect(artifact.missingFields).toContain('costUsd');
   });
 });

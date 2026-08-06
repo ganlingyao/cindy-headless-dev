@@ -1,7 +1,7 @@
 import type { HeadlessProfile } from './profile.js';
 
 export const HEADLESS_CONTRACT_VERSION = 1;
-export const CINDY_HEADLESS_VERSION = '0.1.4';
+export const CINDY_HEADLESS_VERSION = '0.1.5';
 
 export interface CompatibilityReport {
   schemaVersion: 1;

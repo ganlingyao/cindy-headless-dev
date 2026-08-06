@@ -12,7 +12,9 @@ def collect(job_dir: Path) -> List[Dict]:
         identity_path = result_path.parent / "identity.json"
         identity = json.loads(identity_path.read_text(encoding="utf-8")) if identity_path.is_file() else {}
         usage_path = result_path.parent / "usage.json"
-        usage = json.loads(usage_path.read_text(encoding="utf-8")).get("normalizedUsage", {}) if usage_path.is_file() else {}
+        usage_artifact = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.is_file() else {}
+        usage = usage_artifact.get("normalizedUsage", {})
+        usage_status = usage_artifact.get("usageStatus", "MISSING")
         harbor_result_path = trial_dir / "result.json"
         harbor_result = json.loads(harbor_result_path.read_text(encoding="utf-8")) if harbor_result_path.is_file() else {}
         reward = harbor_result.get("verifier_result", {}).get("rewards", {}).get("reward")
@@ -30,10 +32,15 @@ def collect(job_dir: Path) -> List[Dict]:
             "reward": float(reward if reward is not None else result.get("reward") or 0),
             "resultClass": result_class or "FAILED_AGENT",
             "benchmark": result.get("benchmark") or identity.get("benchmark") or "harbor",
-            "costUsd": usage.get("costUsd", 0),
-            "inputTokens": usage.get("inputTokens", 0),
-            "cacheTokens": usage.get("cacheReadTokens", 0),
-            "outputTokens": usage.get("outputTokens", 0),
+            "costUsd": usage.get("costUsd") if usage_status == "COMPLETE" else None,
+            "inputTokens": usage.get("inputTokens") if usage_status != "MISSING" else None,
+            "cacheTokens": usage.get("cacheReadTokens") if usage_status != "MISSING" else None,
+            "outputTokens": usage.get("outputTokens") if usage_status != "MISSING" else None,
+            "usageStatus": usage_status,
+            "usageSource": usage_artifact.get("usageSource", []),
+            "missingUsageFields": usage_artifact.get("missingFields", []),
+            "termination": usage_artifact.get("termination"),
+            "observedTokenTotal": usage_artifact.get("observedTokenTotal"),
             "durationMs": result.get("durationMs", 0),
             "upstreamProvider": identity.get("upstreamProvider"),
             "runId": result.get("runId") or identity.get("runId"),
