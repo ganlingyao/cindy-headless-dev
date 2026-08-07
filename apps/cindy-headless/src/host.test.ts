@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, extractProviderUsage } from './host.js';
+import { classifyFailure, extractProviderUsage, parseOptionalTimeoutMs } from './host.js';
 
 describe('Headless result classification', () => {
   it('classifies a terminal-free successful turn as completed', () => {
@@ -11,6 +11,12 @@ describe('Headless result classification', () => {
     expect(classifyFailure('401 unauthorized', undefined, false)).toBe('infra-invalid-auth');
     expect(classifyFailure('stream disconnected before completion', undefined, false)).toBe('infra-invalid-provider');
     expect(classifyFailure('HEADLESS_TERMINATED_SIGTERM', undefined, false)).toBe('infra-terminated-signal');
+  });
+
+  it('has no internal deadline unless timeout-ms is explicit', () => {
+    expect(parseOptionalTimeoutMs(undefined)).toBeNull();
+    expect(parseOptionalTimeoutMs('1800')).toBe(1800);
+    expect(() => parseOptionalTimeoutMs('0')).toThrow(/positive number/);
   });
 
   it('normalizes provider usage without double-counting cache tokens', () => {

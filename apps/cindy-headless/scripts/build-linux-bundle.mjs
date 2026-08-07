@@ -32,7 +32,8 @@ async function ensureNodeRuntime() {
   const extractDir = path.join(binaryCache, '.node-extract');
   await rm(extractDir, { recursive: true, force: true });
   await mkdir(extractDir, { recursive: true });
-  await execFileAsync('tar', ['-xJf', path.basename(archive), '-C', path.basename(extractDir)], { cwd: binaryCache });
+  const nodeArchivePath = `node-v${nodeMetadata.version}-linux-x64/bin/node`;
+  await execFileAsync('tar', ['-xJf', path.basename(archive), '-C', path.basename(extractDir), nodeArchivePath], { cwd: binaryCache });
   await rm(nodeBinary, { force: true });
   await rename(path.join(extractDir, `node-v${nodeMetadata.version}-linux-x64`, 'bin', 'node'), nodeBinary);
   await rm(extractDir, { recursive: true, force: true });
@@ -43,6 +44,17 @@ async function readBinaryVersion(binaryPath) {
     return await execFileAsync(binaryPath, ['--version'], { timeout: 30_000 });
   } catch (error) {
     if (process.platform !== 'win32') throw error;
+    const verifyImage = process.env.CINDY_HEADLESS_LINUX_VERIFY_IMAGE;
+    if (verifyImage) {
+      const mountDir = path.dirname(path.resolve(binaryPath));
+      const containerBinary = `/opt/cindy-headless-bin/${path.basename(binaryPath)}`;
+      return execFileAsync('docker', [
+        'run', '--rm', '--network', 'none',
+        '-v', `${mountDir}:/opt/cindy-headless-bin:ro`,
+        '--entrypoint', containerBinary,
+        verifyImage, '--version',
+      ], { timeout: 30_000 });
+    }
     const { stdout: linuxPath } = await execFileAsync('wsl.exe', ['-e', 'wslpath', '-a', binaryPath], { timeout: 30_000 });
     return execFileAsync('wsl.exe', ['-e', linuxPath.trim(), '--version'], { timeout: 30_000 });
   }
@@ -75,6 +87,7 @@ const productionPrompt = [desktopHost, desktopClaude].map((part) => part.trim())
 const codexPrompt = [desktopHost, desktopCodex].map((part) => part.trim()).filter(Boolean).join('\n\n') + '\n';
 await writeFile(path.join(outputDir, 'prompt.md'), productionPrompt, 'utf8');
 await writeFile(path.join(outputDir, 'codex-prompt.md'), codexPrompt, 'utf8');
+const cliBytes = await readFile(path.join(outputDir, 'dist', 'cli.cjs'));
 const repoRoot = path.resolve(appDir, '..', '..');
 const packageJson = JSON.parse(await readFile(path.join(appDir, 'package.json'), 'utf8'));
 const [{ stdout: commit }, lockfile, binaryBytes, codexBinaryBytes, nodeBinaryBytes] = await Promise.all([
@@ -84,4 +97,4 @@ const [{ stdout: commit }, lockfile, binaryBytes, codexBinaryBytes, nodeBinaryBy
   readFile(codexBinary),
   readFile(nodeBinary),
 ]);
-await writeFile(path.join(outputDir, 'bundle-manifest.json'), JSON.stringify({ schemaVersion: 4, headlessContractVersion: 1, cindyHeadlessVersion: packageJson.version, cindyCommit: commit.trim(), lockfileDigest: sha256(lockfile), systemPromptDigest: sha256(productionPrompt), codexSystemPromptDigest: sha256(codexPrompt), nodeBinaryDigest: sha256(nodeBinaryBytes), nodeVersion: nodeMetadata.version, claudeBinaryDigest: sha256(binaryBytes), codexBinaryDigest: sha256(codexBinaryBytes), claudeCodeVersion: latest.version, codexVersion: codexLatest.version, observedClaudeVersion, observedCodexVersion, platform: 'linux-x64', generatedAt: new Date().toISOString() }, null, 2) + '\n');
+await writeFile(path.join(outputDir, 'bundle-manifest.json'), JSON.stringify({ schemaVersion: 4, headlessContractVersion: 1, cindyHeadlessVersion: packageJson.version, cindyCommit: commit.trim(), lockfileDigest: sha256(lockfile), cliDigest: sha256(cliBytes), systemPromptDigest: sha256(productionPrompt), codexSystemPromptDigest: sha256(codexPrompt), nodeBinaryDigest: sha256(nodeBinaryBytes), nodeVersion: nodeMetadata.version, claudeBinaryDigest: sha256(binaryBytes), codexBinaryDigest: sha256(codexBinaryBytes), claudeCodeVersion: latest.version, codexVersion: codexLatest.version, observedClaudeVersion, observedCodexVersion, platform: 'linux-x64', generatedAt: new Date().toISOString() }, null, 2) + '\n');

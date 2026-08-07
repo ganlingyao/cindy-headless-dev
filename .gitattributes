@@ -8,6 +8,8 @@
 .githooks/** text eol=lf
 # SQLite migration 内容参与用户数据库 drift hash；跨平台统一 LF。
 apps/desktop/drizzle/**/*.sql text eol=lf
+# Evaluation profile bytes participate in frozen SHA-256 identities.
+apps/cindy-headless/profiles/**/*.json text eol=lf
 # sqlite-vec 扩展二进制（平台特定 .dylib / .dll）—— 走 Git LFS
 apps/desktop/native/sqlite-vec/**/*.dylib filter=lfs diff=lfs merge=lfs -text
 apps/desktop/native/sqlite-vec/**/*.dll filter=lfs diff=lfs merge=lfs -text

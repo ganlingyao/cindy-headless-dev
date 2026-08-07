@@ -116,6 +116,13 @@ export function classifyFailure(error: string | undefined, terminalError: AgentE
   return 'valid-agent-error';
 }
 
+export function parseOptionalTimeoutMs(value: string | undefined): number | null {
+  if (value === undefined) return null;
+  const timeoutMs = Number(value);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('--timeout-ms must be a positive number');
+  return timeoutMs;
+}
+
 function standardResult(status: string, reward: number | null): 'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK' | null {
   if (status === 'valid-completed') return reward === null ? null : reward === 1 ? 'PASSED' : 'FAILED_AGENT';
   if (status === 'valid-agent-error' || status === 'valid-deadline-killed') return 'FAILED_AGENT';
@@ -190,7 +197,7 @@ export function extractProviderUsage(events: AgentEvent[], agentBackend: AgentKi
   };
 }
 
-export async function runTask(resolved: ResolvedProfile, task: string, workingDir: string, outputDir: string, timeoutMs: number, turns: string[] = [task]): Promise<Record<string, unknown>> {
+export async function runTask(resolved: ResolvedProfile, task: string, workingDir: string, outputDir: string, timeoutMs: number | null, turns: string[] = [task]): Promise<Record<string, unknown>> {
   assertSafeExecutionProfile(resolved.profile);
   const releaseEnvironment = await acquireEnvironmentLease();
   try {
@@ -200,7 +207,7 @@ export async function runTask(resolved: ResolvedProfile, task: string, workingDi
   }
 }
 
-async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: string, workingDir: string, outputDir: string, timeoutMs: number, turns: string[] = [task]): Promise<Record<string, unknown>> {
+async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: string, workingDir: string, outputDir: string, timeoutMs: number | null, turns: string[] = [task]): Promise<Record<string, unknown>> {
   const profile = resolved.profile;
   const absoluteOutputDir = path.resolve(outputDir);
   const absoluteWorkingDir = path.resolve(workingDir);
@@ -244,7 +251,9 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
     for (const turn of turns.length > 0 ? turns : [task]) {
       terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
       await session.send(turn);
-      await Promise.race([terminal, termination, new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('HEADLESS_DEADLINE_EXCEEDED')), timeoutMs); })]);
+      const completion: Promise<void>[] = [terminal, termination];
+      if (timeoutMs !== null) completion.push(new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('HEADLESS_DEADLINE_EXCEEDED')), timeoutMs); }));
+      await Promise.race(completion);
       if (timer) { clearTimeout(timer); timer = undefined; }
     }
   } catch (cause) {

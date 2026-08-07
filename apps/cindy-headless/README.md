@@ -64,7 +64,7 @@ npm --prefix apps/cindy-headless run bundle:linux
 npm --prefix apps/cindy-headless run verify:bundle
 ```
 
-`bundle-manifest.json` records the Cindy commit, prompt digests, binary digests, observed versions and Headless contract version. Rebuild it whenever runtime source or pinned binaries change.
+`bundle-manifest.json` records the Cindy commit, CLI/prompt/binary digests, observed versions and Headless contract version. Rebuild it whenever runtime source or pinned binaries change.
 
 ## Release packages
 
@@ -110,6 +110,8 @@ Run a local task:
 ```powershell
 node apps/cindy-headless/dist/cli.cjs run --profile <profile.json> --task "Inspect the repository and report the result" --working-dir . --output-dir results
 ```
+
+`--timeout-ms` is optional. If it is omitted, Cindy Headless does not impose an internal deadline; the outer orchestrator owns timeout policy. Pass the flag only for standalone runs that explicitly need an inner deadline.
 
 The output directory contains identity, config, trace, usage and result artifacts. Prompt bodies and secrets are excluded. Usage artifacts use schema 2 and explicitly report `COMPLETE`, `PARTIAL` or `MISSING`; timeout results must not be interpreted as exact zero token or cost. They also expose `usageCompleteness`: `exact` for a complete provider event, `lower-bound` for observed partial usage, and `incomplete` when no trustworthy count exists. Reports count these categories separately. A disconnected provider stream is infrastructure failure; it is not converted into an agent failure or an estimated token count.
 

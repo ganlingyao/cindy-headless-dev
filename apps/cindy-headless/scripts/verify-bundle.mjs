@@ -10,6 +10,8 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bundleDir = path.join(appDir, 'bundle', 'linux-x64');
 const manifest = JSON.parse(await readFile(path.join(bundleDir, 'bundle-manifest.json'), 'utf8'));
 if (manifest.schemaVersion !== 4 || manifest.headlessContractVersion !== 1) throw new Error('unsupported bundle manifest schema or contract');
+const cliDigest = createHash('sha256').update(await readFile(path.join(bundleDir, 'dist', 'cli.cjs'))).digest('hex');
+if (cliDigest !== manifest.cliDigest) throw new Error('cli bundle digest mismatch');
 for (const [name, expected] of [['node', manifest.nodeBinaryDigest], ['claude', manifest.claudeBinaryDigest], ['codex', manifest.codexBinaryDigest]]) {
   const bytes = await readFile(path.join(bundleDir, 'bin', name));
   const actual = createHash('sha256').update(bytes).digest('hex');
@@ -18,6 +20,16 @@ for (const [name, expected] of [['node', manifest.nodeBinaryDigest], ['claude', 
 const run = async (command, args) => execFileAsync(command, args, { cwd: bundleDir, timeout: 30_000 });
 const runBundleBinary = async (name, args) => {
   if (process.platform !== 'win32') return execFileAsync(path.join(bundleDir, 'bin', name), args, { timeout: 30_000 });
+  const verifyImage = process.env.CINDY_HEADLESS_LINUX_VERIFY_IMAGE;
+  if (verifyImage) {
+    const containerBundle = '/opt/cindy-headless-bundle';
+    return execFileAsync('docker', [
+      'run', '--rm', '--network', 'none',
+      '-v', `${bundleDir}:${containerBundle}:ro`, '-w', containerBundle,
+      '--entrypoint', `${containerBundle}/bin/${name}`,
+      verifyImage, ...args,
+    ], { timeout: 30_000 });
+  }
   const { stdout: linuxBundle } = await execFileAsync('wsl.exe', ['-e', 'wslpath', '-a', bundleDir], { timeout: 30_000 });
   return execFileAsync('wsl.exe', ['-e', path.posix.join(linuxBundle.trim(), `bin/${name}`), ...args], { timeout: 30_000 });
 };

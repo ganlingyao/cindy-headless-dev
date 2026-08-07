@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { capabilities, doctor, readProfile } from './profile.js';
-import { runTask } from './host.js';
+import { parseOptionalTimeoutMs, runTask } from './host.js';
 import { readFile } from 'node:fs/promises';
 import { createEvaluationReport, expandPairedPlan, expandPlan, expandScheduledPlan, freezeHard30, summarizePairedResults, validateManifest, validateOracleGate, validatePairedManifest, writePlan } from './benchmark.js';
 import { compatibilityReport, CINDY_HEADLESS_VERSION } from './compatibility.js';
@@ -31,8 +31,7 @@ async function main(): Promise<void> {
     const turnsFile = flag('--turns-file');
     const turns = turnsFile ? JSON.parse(await readFile(turnsFile, 'utf8')) : [task];
     if (!Array.isArray(turns) || turns.some((turn) => typeof turn !== 'string' || turn.trim() === '')) throw new Error('--turns-file must contain a non-empty string array');
-    const timeoutMs = Number(flag('--timeout-ms') ?? '900000');
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('--timeout-ms must be a positive number');
+    const timeoutMs = parseOptionalTimeoutMs(flag('--timeout-ms'));
     const result = await runTask(await readProfile(requireFlag('--profile')), task, flag('--working-dir') ?? process.cwd(), flag('--output-dir') ?? './results', timeoutMs, turns);
     console.log(JSON.stringify(result, null, 2));
     if (String(result.status ?? '').startsWith('infra-invalid-')) process.exitCode = 1;

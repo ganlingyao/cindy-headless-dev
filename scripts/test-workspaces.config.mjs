@@ -205,6 +205,7 @@ export default {
         },
       },
     },
+    requiredUnitWorkspace('cindy-headless', 'apps/cindy-headless'),
     // Mobile has enough test files to become the critical path at one worker.
     // Give it the full worker budget, but never overlap it with other workspaces.
     requiredUnitWorkspace('mobile', 'apps/mobile', { workers: 4, execution: 'exclusive' }),
