@@ -1,5 +1,6 @@
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import override
 
@@ -63,6 +64,23 @@ class CindyHeadlessAgent(BaseAgent):
             raise ValueError("profile_path must use the profiles/<profile-id>/<file> layout")
         if self.codex_home_dir is not None and not self.codex_home_dir.is_dir():
             raise ValueError(f"codex_home_dir does not exist: {self.codex_home_dir}")
+        self._working_dir: str | None = None
+
+    async def _resolve_working_dir(self, environment: BaseEnvironment) -> str:
+        result = await environment.exec("pwd")
+        working_dir = (result.stdout or "").strip()
+        if result.return_code != 0 or not working_dir.startswith("/"):
+            detail = (result.stderr or result.stdout or "no command output").strip()
+            raise RuntimeError(f"unable to resolve task working directory: {detail}")
+        check = await environment.exec(
+            f"test -d {shlex.quote(working_dir)} && test -w {shlex.quote(working_dir)}"
+        )
+        if check.return_code != 0:
+            raise RuntimeError(
+                f"task working directory is missing or not writable: {working_dir}"
+            )
+        self._working_dir = working_dir
+        return working_dir
 
     @staticmethod
     @override
@@ -81,6 +99,7 @@ class CindyHeadlessAgent(BaseAgent):
         profile = json.loads(self.profile_path.read_text(encoding="utf-8"))
         backend = profile.get("agentBackend", "claude-code")
         binary = "codex" if backend == "codex" else "claude"
+        working_dir = await self._resolve_working_dir(environment)
         runtime_env = dict(self.extra_env)
         if backend == "codex":
             if self.codex_home_dir is not None:
@@ -91,7 +110,8 @@ class CindyHeadlessAgent(BaseAgent):
         result = await environment.exec(
             f"set -e; mkdir -p /logs/agent; chmod +x /opt/cindy-headless/bin/node /opt/cindy-headless/bin/{binary}; "
             "/opt/cindy-headless/bin/node /opt/cindy-headless/dist/cli.cjs doctor "
-            f"--profile {container_profile} --output-dir /logs/agent",
+            f"--profile {container_profile} --output-dir /logs/agent "
+            f"--working-dir {shlex.quote(working_dir)}",
             env=runtime_env,
             timeout_sec=60,
         )
@@ -133,6 +153,7 @@ class CindyHeadlessAgent(BaseAgent):
         if profile.get("agentBackend") == "codex" and self.codex_home_dir is not None:
             base_env["CINDY_HEADLESS_CODEX_HOME"] = "/opt/cindy-headless/codex-home"
         container_profile = f"/opt/cindy-headless/profiles/{self.profile_path.parent.name}/{self.profile_path.name}"
+        working_dir = self._working_dir or await self._resolve_working_dir(environment)
         last_error = ""
         for attempt in range(1, self.infra_retries + 2):
             attempt_dir = f"/logs/agent/attempt-{attempt}"
@@ -142,7 +163,7 @@ class CindyHeadlessAgent(BaseAgent):
                 env["CINDY_REPLACES_ATTEMPT_ID"] = f"{attempt_prefix}-attempt-1"
             result = await environment.exec(
                 "mkdir -p " + attempt_dir + "; /opt/cindy-headless/bin/node /opt/cindy-headless/dist/cli.cjs run "
-                f"--profile {container_profile} --working-dir /app --output-dir {attempt_dir} --timeout-ms {int(self.headless_timeout_sec * 1000)}",
+                f"--profile {container_profile} --working-dir {shlex.quote(working_dir)} --output-dir {attempt_dir} --timeout-ms {int(self.headless_timeout_sec * 1000)}",
                 env=env,
                 timeout_sec=self.headless_timeout_sec + self.headless_grace_sec,
             )
@@ -170,15 +191,40 @@ class CindyHeadlessAgent(BaseAgent):
             if usage_artifact.get("schemaVersion") != 2:
                 raise ValueError("unsupported cindy-headless usage schema")
             usage = usage_artifact["normalizedUsage"]
-            if usage_artifact.get("usageStatus") == "COMPLETE":
-                context.cost_usd = usage.get("costUsd")
-            context.n_input_tokens = usage.get("inputTokens")
-            context.n_cache_tokens = usage.get("cacheReadTokens")
-            context.n_output_tokens = usage.get("outputTokens")
+            missing_fields = set(usage_artifact.get("missingFields", []))
+            usage_status = usage_artifact.get("usageStatus", "MISSING")
+
+            def _known_int(key: str) -> int | None:
+                value = usage.get(key)
+                if usage_status == "MISSING" or key in missing_fields:
+                    return None
+                if isinstance(value, (int, float)) and value >= 0:
+                    return int(value)
+                return None
+
+            context.cost_usd = (
+                usage.get("costUsd")
+                if usage_status != "MISSING" and "costUsd" not in missing_fields
+                else None
+            )
+            input_parts = [
+                _known_int("inputTokens"),
+                _known_int("cacheCreationTokens"),
+                _known_int("cacheReadTokens"),
+            ]
+            context.n_input_tokens = (
+                sum(v for v in input_parts if v is not None)
+                if all(v is not None for v in input_parts)
+                else None
+            )
+            context.n_cache_tokens = _known_int("cacheReadTokens")
+            context.n_output_tokens = _known_int("outputTokens")
         if result_path.is_file():
             result = json.loads(result_path.read_text(encoding="utf-8"))
             context.metadata = {"cindy_headless": result}
             usage_artifact = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.is_file() else {}
             usage = usage_artifact.get("normalizedUsage", {})
-            if usage_artifact.get("usageStatus") == "COMPLETE":
+            usage_status = usage_artifact.get("usageStatus", "MISSING")
+            cost_missing = "costUsd" in usage_artifact.get("missingFields", [])
+            if usage_status != "MISSING" and not cost_missing:
                 self._batch_cost_usd += float(usage.get("costUsd") or 0)
