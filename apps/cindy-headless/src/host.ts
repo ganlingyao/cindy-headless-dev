@@ -129,6 +129,14 @@ export function parseOptionalTimeoutMs(value: string | undefined): number | null
   return timeoutMs;
 }
 
+export function usageMissingFields(rawProviderUsage: Record<string, unknown> | null, usageStatus: 'COMPLETE' | 'PARTIAL' | 'MISSING'): string[] {
+  const fields = ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens', 'costUsd'];
+  // A provider artifact can legitimately report zero. Presence of the
+  // structured artifact makes each normalized component an observed value;
+  // PARTIAL still communicates that the totals are only a lower bound.
+  return rawProviderUsage || usageStatus === 'COMPLETE' ? [] : fields;
+}
+
 function standardResult(status: string, reward: number | null): 'PASSED' | 'FAILED_AGENT' | 'ERRORED_INFRA' | 'INVALID_TASK' | null {
   if (status === 'valid-completed') return reward === null ? null : reward === 1 ? 'PASSED' : 'FAILED_AGENT';
   if (status === 'valid-agent-error' || status === 'valid-deadline-killed') return 'FAILED_AGENT';
@@ -282,7 +290,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const usageStatus = deadlineKilled ? (hasObservedUsage ? 'PARTIAL' : 'MISSING') : (providerUsage.rawProviderUsage && !reconstructed ? 'COMPLETE' : hasObservedUsage ? 'PARTIAL' : 'MISSING');
   const usageCompleteness = usageStatus === 'COMPLETE' ? 'exact' : usageStatus === 'PARTIAL' ? 'lower-bound' : 'incomplete';
   const usageSource = [providerUsage.rawProviderUsage ? 'provider-events' : '', usage.tokenUsage > 0 ? 'session-snapshot' : ''].filter(Boolean);
-  const missingFields = usageStatus === 'COMPLETE' ? [] : ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens', 'costUsd'].filter((field) => providerUsage.normalizedUsage[field as keyof typeof providerUsage.normalizedUsage] === 0);
+  const missingFields = usageMissingFields(providerUsage.rawProviderUsage, usageStatus);
   const status = classifyFailure(error, terminalError, deadlineKilled);
   const reward = typeof process.env.CINDY_HEADLESS_REWARD === 'string' ? Number(process.env.CINDY_HEADLESS_REWARD) : null;
   const benchmark = process.env.CINDY_BENCHMARK ?? null;

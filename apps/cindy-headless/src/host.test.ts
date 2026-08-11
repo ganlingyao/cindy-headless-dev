@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, extractProviderUsage, parseOptionalTimeoutMs } from './host.js';
+import { classifyFailure, extractProviderUsage, parseOptionalTimeoutMs, usageMissingFields } from './host.js';
 
 describe('Headless result classification', () => {
   it('classifies a terminal-free successful turn as completed', () => {
@@ -25,6 +25,11 @@ describe('Headless result classification', () => {
   it('normalizes provider usage without double-counting cache tokens', () => {
     const usage = extractProviderUsage([{ type: 'done', data: { usage: { input_tokens: 3, cache_read_input_tokens: 10, cache_creation_input_tokens: 5, output_tokens: 7 }, total_cost_usd: 0.25 } }]);
     expect(usage.normalizedUsage).toEqual({ inputTokens: 3, cacheReadTokens: 10, cacheCreationTokens: 5, outputTokens: 7, costUsd: 0.25 });
+  });
+
+  it('does not treat an observed zero token component as missing', () => {
+    expect(usageMissingFields({ cache_creation_input_tokens: 0, reconstructed_from: 'agentMeta+terminalStatus' }, 'PARTIAL')).toEqual([]);
+    expect(usageMissingFields(null, 'MISSING')).toContain('inputTokens');
   });
 
   it('reconstructs current Claude usage from request metadata and terminal status', () => {
