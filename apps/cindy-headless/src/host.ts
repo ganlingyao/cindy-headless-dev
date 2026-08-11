@@ -273,7 +273,13 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
     deadlineKilled = error === 'HEADLESS_DEADLINE_EXCEEDED';
-    if ((deadlineKilled || terminationSignal) && session) await session.abort().catch(() => undefined);
+    if (deadlineKilled || terminationSignal) {
+      if (session) await session.abort().catch(() => undefined);
+      // Force-shutdown the Maker runtime so the underlying agent binary is
+      // killed even when it is stuck on a streaming HTTP call.  abort() alone
+      // only sends a signal that may not be checked until the request completes.
+      try { await runtime?.maker.shutdown(); } catch { /* kill is best-effort */ }
+    }
   } finally {
     if (timer) clearTimeout(timer);
     process.off('SIGTERM', onSigterm);
@@ -281,7 +287,18 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   }
   // Claude may emit the final `done` event while closing the SDK session. Flush
   // it before extracting provider usage so Harbor receives real token counts.
-  try { await session?.close(); } catch { /* artifact writing must still run */ }
+  // After a forced abort the underlying process may be stuck on a streaming HTTP
+  // call and never respond to close — apply a hard deadline so artifacts are
+  // always written.
+  const CLOSE_DEADLINE_MS = 5_000;
+  const closeDeadline = new Promise<void>((resolve) => setTimeout(resolve, CLOSE_DEADLINE_MS));
+  try {
+    if (deadlineKilled || terminationSignal) {
+      await Promise.race([session?.close(), closeDeadline]);
+    } else {
+      await session?.close();
+    }
+  } catch { /* artifact writing must still run */ }
   const usage = session?.getUsageSnapshot() ?? { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
   const providerUsage = extractProviderUsage(events, profile.agentBackend);
   if (providerUsage.normalizedUsage.costUsd === 0 && usage.costUsd > 0) providerUsage.normalizedUsage.costUsd = usage.costUsd;
