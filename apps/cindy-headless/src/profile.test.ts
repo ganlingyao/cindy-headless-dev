@@ -12,6 +12,11 @@ describe('headless profile', () => {
     expect(() => validateProfile({ ...profile, model: { ...profile.model, requestedId: 'other' } })).toThrow(/not supported/);
     expect(() => validateProfile({ ...profile, supportedModelIds: ['latest'], model: { ...profile.model, requestedId: 'latest' } })).toThrow(/exact/);
   });
+  it('validates explicit evaluation model controls', () => {
+    expect(validateProfile({ ...profile, model: { ...profile.model, contextLimit: 1_048_576, effort: 'xhigh', maxOutputTokens: 32_000 } }).model).toMatchObject({ contextLimit: 1_048_576, effort: 'xhigh', maxOutputTokens: 32_000 });
+    expect(() => validateProfile({ ...profile, model: { ...profile.model, contextLimit: 0 } })).toThrow(/positive integer/);
+    expect(() => validateProfile({ ...profile, model: { ...profile.model, maxOutputTokens: -1 } })).toThrow(/positive integer/);
+  });
   it('requires single-variable metadata for derived profiles', () => expect(() => validateProfile({ ...profile, parentProfile: 'base' })).toThrow(/changedDimensions/));
   it('keeps Cindy Maker Memory mutually exclusive with native Agent memory', () => expect(() => validateProfile({ ...profile, makerMemory: true, nativeMemory: true })).toThrow(/mutually exclusive/));
   it('reports the original Cindy harness switches in capabilities', () => expect(capabilities(validateProfile({ ...profile, makerMemory: true, projectContext: true }))).toMatchObject({ makerMemory: true, nativeMemory: false, projectContext: true, nativeToolSurface: 'claude-code-default', cindyMcpProviders: ['cindy_memory'], desktopOnlyProviders: [], multiTurnSession: true }));

@@ -11,6 +11,9 @@ describe('Headless result classification', () => {
     expect(classifyFailure('401 unauthorized', undefined, false)).toBe('infra-invalid-auth');
     expect(classifyFailure('stream disconnected before completion', undefined, false)).toBe('infra-invalid-provider');
     expect(classifyFailure('HEADLESS_TERMINATED_SIGTERM', undefined, false)).toBe('infra-terminated-signal');
+    expect(classifyFailure('spawn failed: cwd /app ENOENT', undefined, false)).toBe('infra-invalid-runtime');
+    expect(classifyFailure('sdk_stream_crashed after HTTP 502', undefined, false)).toBe('infra-invalid-provider');
+    expect(classifyFailure('HTTP 400 unsupported document block', undefined, false)).toBe('invalid-task-unsupported-capability');
   });
 
   it('has no internal deadline unless timeout-ms is explicit', () => {

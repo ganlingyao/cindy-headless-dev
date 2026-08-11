@@ -2,7 +2,7 @@
   "id": "cindy-claude-parity-all-off-kimi-k3",
   "version": 1,
   "parentProfile": "cindy-production-kimi-k3",
-  "changedDimensions": ["cindyToolSurface", "compaction", "systemPrompt"],
+  "changedDimensions": ["makerMemory", "nativeMemory", "projectContext", "cindyToolSurface", "compaction", "systemPrompt"],
   "agentBackend": "claude-code",
   "agentBinaryPath": "/opt/cindy-headless/bin/claude",
   "agentBinaryVersion": "2.1.219",
@@ -12,7 +12,9 @@
     "requestedId": "moonshot/kimi-k3",
     "routeId": "company-gateway-anthropic",
     "contextLimit": 1048576,
-    "thinkingBudget": "gateway-default"
+    "thinkingBudget": "gateway-default",
+    "effort": "xhigh",
+    "maxOutputTokens": 32000
   },
   "permissionMode": "bypassPermissions",
   "makerMemory": false,

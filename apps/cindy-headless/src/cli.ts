@@ -21,7 +21,7 @@ async function main(): Promise<void> {
     const resolved = await readProfile(requireFlag('--profile'));
     if (command === 'capabilities') console.log(JSON.stringify({ ...capabilities(resolved.profile), profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest }, null, 2));
     else if (command === 'compatibility-report') console.log(JSON.stringify({ ...compatibilityReport(resolved.profile), profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest }, null, 2));
-    else if (command === 'doctor' || command === 'verify-agent') console.log(JSON.stringify(await doctor(resolved, flag('--output-dir')), null, 2));
+    else if (command === 'doctor' || command === 'verify-agent') console.log(JSON.stringify(await doctor(resolved, flag('--output-dir'), flag('--working-dir')), null, 2));
     else console.log(JSON.stringify({ ok: true, profileId: resolved.profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest }, null, 2));
     return;
   }

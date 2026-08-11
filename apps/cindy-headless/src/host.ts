@@ -60,14 +60,17 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workin
     initialEnabled: profile.makerMemory,
     reviewAgent: profile.agentBackend,
   });
-  const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, userDataPath: stateDir, memoryEnabled: profile.nativeMemory, makerMemoryEnabled: profile.makerMemory, behaviorFlags: profile.containerSandbox ? { IS_SANDBOX: '1' } : undefined, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
+  const behaviorFlags: Record<string, string> = profile.containerSandbox ? { IS_SANDBOX: '1' } : {};
+  if (profile.model.maxOutputTokens) behaviorFlags.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(profile.model.maxOutputTokens);
+  const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, userDataPath: stateDir, memoryEnabled: profile.nativeMemory, makerMemoryEnabled: profile.makerMemory, behaviorFlags, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
+  const capabilityAdditions = profile.model.contextLimit ? { availableModels: [{ id: profile.model.requestedId, displayName: profile.model.requestedId, contextWindow: profile.model.contextLimit, efforts: profile.model.effort ? [profile.model.effort] : [], defaultEffort: profile.model.effort ?? null }] } : undefined;
   const memoryProvider = createMemoryMcpProvider({ getManager: () => makerMemory, logger: logger.child('cindy-memory-mcp') });
   const memoryProviders = profile.makerMemory ? [memoryProvider] : [];
   let bridge: CodexMemoryBridge | undefined;
   let bridgePromise: Promise<CodexMemoryBridge> | undefined;
   let agent: BaseAgent;
   if (profile.agentBackend === 'claude-code') {
-    agent = new ClaudeCodeAgent({ auth: claudeAuth(), runtimeConfig, binaryPath: profile.agentBinaryPath, logger, mcpProviders: memoryProviders, makerMemory });
+    agent = new ClaudeCodeAgent({ auth: claudeAuth(), runtimeConfig, binaryPath: profile.agentBinaryPath, logger, mcpProviders: memoryProviders, makerMemory, capabilityAdditions });
   } else {
     agent = new CodexAgent({
       auth: codexAuth(stateDir),
@@ -76,6 +79,7 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workin
       logger,
       mcpProviders: memoryProviders,
       makerMemory,
+      capabilityAdditions,
       prepareCodexExtraSpawnConfig: async () => {
         let extraArgs = process.env.CINDY_CODEX_API_KEY && process.env.CINDY_HEADLESS_BASE_URL
           ? buildCodexGatewayArgs({ baseUrl: process.env.CINDY_HEADLESS_BASE_URL, apiKey: process.env.CINDY_CODEX_API_KEY })
@@ -110,9 +114,11 @@ export function classifyFailure(error: string | undefined, terminalError: AgentE
   if (error?.startsWith('HEADLESS_TERMINATED_')) return 'infra-terminated-signal';
   if (!error && !terminalError) return 'valid-completed';
   const text = `${error ?? ''} ${terminalError ? JSON.stringify(terminalError.data) : ''}`.toLowerCase();
-  if (/auth|api.?key|unauthorized|401/.test(text)) return 'infra-invalid-auth';
+  if (/enoent|cwd|working directory|native binary not found|spawn.*not found/.test(text)) return 'infra-invalid-runtime';
+  if (/auth|api.?key|unauthorized|401|403/.test(text)) return 'infra-invalid-auth';
   if (/model.*(not found|unsupported)|route|requested.*effective/.test(text)) return 'infra-invalid-route';
-  if (/rate.?limit|overload|provider|network|econn|timeout|stream disconnected|broken pipe|connection reset|connection aborted|socket hang up/.test(text)) return 'infra-invalid-provider';
+  if (/http\s*5\d\d|status\s*5\d\d|rate.?limit|429|overload|provider|network|econn|operation timed out|upstream.*timeout|sdk_stream_crashed|stream disconnected|broken pipe|connection reset|connection aborted|socket hang up|sigkill/.test(text)) return 'infra-invalid-provider';
+  if (/http\s*400|status\s*400|document.*(unsupported|invalid)|unsupported.*document/.test(text)) return 'invalid-task-unsupported-capability';
   return 'valid-agent-error';
 }
 
@@ -244,7 +250,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   try {
     await mkdir(stateDir, { recursive: true });
     runtime = createHeadlessMaker(resolved, stateDir, absoluteWorkingDir);
-    session = await runtime.maker.createSession({ agentKind: profile.agentBackend, workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
+    session = await runtime.maker.createSession({ agentKind: profile.agentBackend, workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, effort: profile.model.effort, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
     let resolveTerminal: (() => void) | undefined;
     let terminal = Promise.resolve();
     session.onEvent((event) => { events.push(event); if (event.type === 'error' && isTerminalTurnEvent(event)) terminalError = event; if (isTerminalTurnEvent(event)) resolveTerminal?.(); });
@@ -290,14 +296,16 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const actualEndpoint = profile.agentBackend === 'codex'
     ? process.env.CINDY_CODEX_BASE_URL ?? process.env.CINDY_HEADLESS_BASE_URL ?? null
     : profile.endpoint ?? null;
-  const identity = { schemaVersion: 2, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, cindyCliVersion: CINDY_HEADLESS_VERSION, harborVersion: process.env.HARBOR_VERSION ?? null, litellmVersion: process.env.LITELLM_VERSION ?? null, requestedModelId: profile.model.requestedId, actualModelId: process.env.CINDY_ACTUAL_MODEL ?? profile.model.requestedId, provider: profile.model.provider, actualEndpoint, upstreamProvider: process.env.CINDY_UPSTREAM_PROVIDER ?? profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
+  const actualModelId = process.env.CINDY_ACTUAL_MODEL ?? null;
+  const upstreamProvider = process.env.CINDY_UPSTREAM_PROVIDER ?? null;
+  const identity = { schemaVersion: 2, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, cindyCliVersion: CINDY_HEADLESS_VERSION, harborVersion: process.env.HARBOR_VERSION ?? null, litellmVersion: process.env.LITELLM_VERSION ?? null, requestedModelId: profile.model.requestedId, actualModelId, identityEvidence: actualModelId || upstreamProvider ? 'gateway-attested' : 'unknown', provider: profile.model.provider, actualEndpoint, upstreamProvider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
   const result = { schemaVersion: 2, status, resultClass: standard, reward, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, sessionId: session?.id ?? null, turnsCount: turns.length > 0 ? turns.length : 1, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length, retries: Number(process.env.CINDY_RETRY_COUNT ?? '0') || 0, replacesAttemptId: process.env.CINDY_REPLACES_ATTEMPT_ID ?? null };
   try { await runtime?.maker.shutdown(); } catch { /* best effort cleanup */ }
   try { await runtime?.shutdownBridge(); } catch { /* best effort cleanup */ }
   try { runtime?.sessionStorage.close(); } catch { /* best effort cleanup */ }
   await Promise.all([
     writeFile(path.join(absoluteOutputDir, 'identity.json'), JSON.stringify(identity, null, 2) + '\n', 'utf8'),
-    writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
+    writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, effectiveModel: { requestedId: profile.model.requestedId, provider: profile.model.provider, effort: profile.model.effort ?? null, contextLimit: profile.model.contextLimit ?? null, maxOutputTokens: profile.model.maxOutputTokens ?? null }, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'trace.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''), 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage, usageStatus, usageCompleteness, usageSource, missingFields, termination: deadlineKilled ? 'HEADLESS_DEADLINE' : terminationSignal ?? null, observedTokenTotal: usage.tokenUsage > 0 ? usage.tokenUsage : null }), null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8'),

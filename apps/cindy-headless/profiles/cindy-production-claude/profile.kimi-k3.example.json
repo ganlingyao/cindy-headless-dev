@@ -12,7 +12,9 @@
     "requestedId": "moonshot/kimi-k3",
     "routeId": "company-gateway-anthropic",
     "contextLimit": 1048576,
-    "thinkingBudget": "gateway-default"
+    "thinkingBudget": "gateway-default",
+    "effort": "xhigh",
+    "maxOutputTokens": 32000
   },
   "permissionMode": "bypassPermissions",
   "systemPromptFile": "prompt.md",

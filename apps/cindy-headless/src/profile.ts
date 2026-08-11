@@ -22,6 +22,8 @@ export interface HeadlessProfile {
     routeId?: string;
     contextLimit?: number;
     thinkingBudget?: number | string;
+    effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+    maxOutputTokens?: number;
   };
   endpoint?: string;
   permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default' | 'ask' | 'auto' | 'plan';
@@ -80,6 +82,9 @@ export function validateProfile(profile: unknown): HeadlessProfile {
   nonEmptyString(value.model.provider, 'model.provider');
   nonEmptyString(value.model.requestedId, 'model.requestedId');
   if (!value.supportedModelIds.includes(value.model.requestedId)) throw new Error(`model ${value.model.requestedId} is not supported by this profile`);
+  if (value.model.contextLimit !== undefined && (!Number.isInteger(value.model.contextLimit) || value.model.contextLimit <= 0)) throw new Error('model.contextLimit must be a positive integer');
+  if (value.model.maxOutputTokens !== undefined && (!Number.isInteger(value.model.maxOutputTokens) || value.model.maxOutputTokens <= 0)) throw new Error('model.maxOutputTokens must be a positive integer');
+  if (value.model.effort !== undefined && !['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(value.model.effort)) throw new Error('model.effort is unsupported');
   if (!['bypassPermissions', 'acceptEdits', 'default', 'ask', 'auto', 'plan'].includes(value.permissionMode ?? '')) throw new Error('unsupported permissionMode');
   if (value.agentBackend === 'claude-code' && value.permissionMode === 'auto') throw new Error('auto permissionMode is only supported by codex');
   if (value.agentBackend === 'codex' && (value.permissionMode === 'acceptEdits' || value.permissionMode === 'default')) throw new Error(`${value.permissionMode} permissionMode is not supported by codex`);
@@ -130,7 +135,7 @@ export async function readProfile(profilePath: string): Promise<ResolvedProfile>
   return { profile, profilePath: absolutePath, systemPrompt, profileDigest: profileDigest(profile), systemPromptDigest };
 }
 
-export async function doctor(resolved: ResolvedProfile, outputDir?: string): Promise<{ ok: true; checks: Record<string, string | boolean> }> {
+export async function doctor(resolved: ResolvedProfile, outputDir?: string, workingDir?: string): Promise<{ ok: true; checks: Record<string, string | boolean> }> {
   assertSafeExecutionProfile(resolved.profile);
   await access(resolved.profile.agentBinaryPath);
   const codexHome = process.env.CINDY_HEADLESS_CODEX_HOME ?? process.env.CODEX_HOME;
@@ -144,7 +149,9 @@ export async function doctor(resolved: ResolvedProfile, outputDir?: string): Pro
   const env = resolved.profile.agentBackend === 'codex' && codexHome
     ? { ...process.env, CODEX_HOME: path.resolve(codexHome) }
     : process.env;
-  const versionResult = await execFileAsync(resolved.profile.agentBinaryPath, ['--version'], { timeout: 30_000, env });
+  const resolvedWorkingDir = workingDir ? path.resolve(workingDir) : undefined;
+  if (resolvedWorkingDir) await access(resolvedWorkingDir);
+  const versionResult = await execFileAsync(resolved.profile.agentBinaryPath, ['--version'], { timeout: 30_000, env, cwd: resolvedWorkingDir });
   const observedVersion = `${versionResult.stdout} ${versionResult.stderr}`.trim();
   if (!observedVersion.includes(resolved.profile.agentBinaryVersion)) throw new Error(`agent binary version mismatch: expected ${resolved.profile.agentBinaryVersion}, observed ${observedVersion}`);
   if (resolved.profile.agentBackend === 'codex') {
@@ -161,7 +168,7 @@ export async function doctor(resolved: ResolvedProfile, outputDir?: string): Pro
   const endpointConfigured = resolved.profile.agentBackend === 'claude-code'
     ? Boolean(resolved.profile.endpoint)
     : Boolean(process.env.CINDY_CODEX_BASE_URL ?? process.env.CINDY_HEADLESS_BASE_URL);
-  return { ok: true, checks: { profile: true, contractVersion: String(compatibility.contractVersion), transport: compatibility.transport, securityIsolation: compatibility.security.safeForUntrustedWorkloads, agentBinary: resolved.profile.agentBinaryPath, agentBinaryVersion: observedVersion, authEnvironment: true, endpointConfigured, outputDirectory: outputDir ? path.resolve(outputDir) : 'not-requested', systemPromptDigest: resolved.systemPromptDigest ?? 'none' } };
+  return { ok: true, checks: { profile: true, contractVersion: String(compatibility.contractVersion), transport: compatibility.transport, securityIsolation: compatibility.security.safeForUntrustedWorkloads, agentBinary: resolved.profile.agentBinaryPath, agentBinaryVersion: observedVersion, authEnvironment: true, endpointConfigured, workingDirectory: resolvedWorkingDir ?? 'process-cwd', outputDirectory: outputDir ? path.resolve(outputDir) : 'not-requested', systemPromptDigest: resolved.systemPromptDigest ?? 'none' } };
 }
 
 export function capabilities(profile: HeadlessProfile): ProfileCapabilities {
