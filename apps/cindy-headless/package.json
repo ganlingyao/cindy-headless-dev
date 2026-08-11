@@ -18,6 +18,7 @@
     "test:distribution": "node scripts/verify-distribution.mjs",
     "doctor:distribution": "node scripts/distribution-doctor.mjs",
     "verify:bundle": "node scripts/verify-bundle.mjs",
+    "verify:bundle:claude": "node scripts/verify-claude-bundle.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "verify": "pnpm typecheck && pnpm test && pnpm build"
