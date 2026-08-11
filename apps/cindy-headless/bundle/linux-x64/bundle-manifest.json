@@ -2,7 +2,7 @@
   "schemaVersion": 4,
   "headlessContractVersion": 1,
   "cindyHeadlessVersion": "0.1.7",
-  "cindyCommit": "520bdb6e1b3454c319b8c252a073e72c22649952",
+  "cindyCommit": "d918a4f3bbf728bf11c7940d35584b877f8116a3",
   "lockfileDigest": "e3d026b4fa8abca942e5da583f995985c56251d18e53ddec7540c9a67703301c",
   "cliDigest": "62a6deb0c1d4fb4283aab1058bde315528e59e1545e854f633ca8bd159e74e0b",
   "systemPromptDigest": "17fc96a52444260aa44b85c0de216b5e29086a4e86202d8840f8dc1ba9391221",
@@ -16,5 +16,5 @@
   "observedClaudeVersion": "2.1.219 (Claude Code)",
   "observedCodexVersion": "codex-cli 0.145.0",
   "platform": "linux-x64",
-  "generatedAt": "2026-08-11T04:37:08.211Z"
+  "generatedAt": "2026-08-11T04:41:53.309Z"
 }
