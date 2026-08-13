@@ -206,11 +206,47 @@ underlying Agent/model capability remains authoritative. This setting controls
 Headless context accounting and compaction thresholds, but does not increase an
 upstream model or gateway's actual context capacity.
 
-`run --timeout-ms` is also enforced by Headless itself. Harbor supplies the
-single authoritative trial deadline and the adapter derives the Headless value
-slightly earlier so Headless can abort the Agent and persist partial usage and
-trace artifacts first. Headless derives the Maker turn-stall watchdog from the
-same value and records both effective values in `config.json`.
+`run --timeout-ms` is enforced by Headless itself. When the flag is omitted,
+the standalone default is **1800 seconds (1,800,000 ms)**. This default is a
+fallback for direct CLI use; it is not a second independent benchmark policy.
+
+When Harbor owns the run, Harbor's `execution_timeout_sec` is authoritative and
+the Cindy Harbor adapter must pass an explicit Headless deadline slightly
+earlier (currently five seconds earlier, with a minimum of one second). This
+leaves time to abort the Agent and persist partial usage and trace artifacts
+before Harbor terminates the container. Headless derives the Maker turn-stall
+watchdog from the effective `--timeout-ms` and records both `timeoutMs` and
+`turnStallMs` in `config.json`. Do not remove the adapter argument or rely on
+the 1800-second fallback for a Harbor run.
+
+For example, a 1800-second Harbor deadline produces a 1795-second Headless
+deadline and a 1436-second watchdog. A direct invocation without the flag uses
+1800 seconds and a 1440-second watchdog.
+
+## Building a usable Harbor package
+
+Build and verify a release only from a clean, committed feature branch. The
+bundle must be Linux x64 for Docker and must include the matching profile,
+`dist/cli.cjs`, `bundle/`, prompt files, and bundle manifest. Record the source
+commit, bundle SHA-256, profile SHA-256, Cindy/Claude binary versions, model,
+endpoint, and timeout in the runtime manifest. Never mix a newly built bundle
+with an older profile or upload an unverified local directory.
+
+Minimum release checks:
+
+```powershell
+pnpm --filter cindy-headless typecheck
+pnpm --filter cindy-headless test
+pnpm --filter cindy-headless build
+pnpm --filter cindy-headless verify:bundle
+```
+
+Register the resulting runtime in Headless Benchmark Tool, run package
+verification, and require `READY` before a Harbor benchmark. A one-task Harbor
+smoke should verify `config.json`, `identity.json`, `result.json`, `usage.json`,
+`trace.jsonl`, and `trace.raw.jsonl`; only then publish the bundle and its
+manifest to the private releases repository. The release README must preserve
+these exact digests and the command used to reproduce the package.
 
 The Kimi gateway examples are
 `profiles/cindy-production-claude/profile.kimi-k3.example.json` and

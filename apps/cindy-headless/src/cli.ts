@@ -31,7 +31,9 @@ async function main(): Promise<void> {
     const turnsFile = flag('--turns-file');
     const turns = turnsFile ? JSON.parse(await readFile(turnsFile, 'utf8')) : [task];
     if (!Array.isArray(turns) || turns.some((turn) => typeof turn !== 'string' || turn.trim() === '')) throw new Error('--turns-file must contain a non-empty string array');
-    const timeoutMs = Number(flag('--timeout-ms') ?? '900000');
+    // Keep standalone Headless runs usable for long Terminal-Bench tasks. Harbor
+    // still supplies an explicit, slightly earlier deadline when it owns the run.
+    const timeoutMs = Number(flag('--timeout-ms') ?? '1800000');
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('--timeout-ms must be a positive number');
     const result = await runTask(await readProfile(requireFlag('--profile')), task, flag('--working-dir') ?? process.cwd(), flag('--output-dir') ?? './results', timeoutMs, turns);
     console.log(JSON.stringify(result, null, 2));
