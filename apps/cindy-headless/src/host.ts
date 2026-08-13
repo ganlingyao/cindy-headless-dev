@@ -14,6 +14,50 @@ import { buildCodexGatewayArgs } from './gateway-config.js';
 
 let environmentQueue = Promise.resolve();
 
+const MIN_TURN_STALL_MS = 1_000;
+const HEADLESS_CLEANUP_RESERVE_MS = 10_000;
+
+export function deriveTurnStallMs(timeoutMs: number): number {
+  const beforeDeadline = Math.max(MIN_TURN_STALL_MS, timeoutMs - HEADLESS_CLEANUP_RESERVE_MS);
+  return Math.min(beforeDeadline, Math.max(MIN_TURN_STALL_MS, Math.floor(timeoutMs * 0.8)));
+}
+
+function eventData(event: AgentEvent): Record<string, unknown> | undefined {
+  return event.data && typeof event.data === 'object' && !Array.isArray(event.data)
+    ? event.data as Record<string, unknown>
+    : undefined;
+}
+
+export function normalizeTraceEvents(events: AgentEvent[]): AgentEvent[] {
+  const output: Array<AgentEvent | undefined> = [];
+  const deltas = new Map<string, number[]>();
+  let fallbackTurn = 0;
+
+  for (const event of events) {
+    if (event.type === 'done' || (event.type === 'error' && isTerminalTurnEvent(event))) {
+      fallbackTurn += 1;
+    }
+    if (event.type !== 'text' && event.type !== 'thinking') {
+      output.push(event);
+      continue;
+    }
+    const data = eventData(event);
+    const turn = event.turnAttemptToken ?? fallbackTurn;
+    const key = `${turn}:${event.type}`;
+    if (data?.isFinal === true) {
+      for (const index of deltas.get(key) ?? []) output[index] = undefined;
+      deltas.delete(key);
+      output.push(event);
+      continue;
+    }
+    const index = output.push(event) - 1;
+    const indexes = deltas.get(key) ?? [];
+    indexes.push(index);
+    deltas.set(key, indexes);
+  }
+  return output.filter((event): event is AgentEvent => event !== undefined);
+}
+
 async function acquireEnvironmentLease(): Promise<() => void> {
   let release!: () => void;
   const previous = environmentQueue;
@@ -225,10 +269,12 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const absoluteWorkingDir = path.resolve(workingDir);
   await mkdir(absoluteOutputDir, { recursive: true });
   const cleanHome = await mkdtemp(path.join(os.tmpdir(), 'cindy-headless-'));
-  const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR };
+  const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, XDT_SESSION_TURN_STALL_MS: process.env.XDT_SESSION_TURN_STALL_MS };
+  const turnStallMs = deriveTurnStallMs(timeoutMs);
   process.env.HOME = cleanHome;
   process.env.USERPROFILE = cleanHome;
   process.env.CLAUDE_CONFIG_DIR = path.join(cleanHome, '.claude');
+  process.env.XDT_SESSION_TURN_STALL_MS = String(turnStallMs);
   try {
   const events: AgentEvent[] = [];
   let session: Awaited<ReturnType<Maker['createSession']>> | undefined;
@@ -332,10 +378,12 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   try { await runtime?.maker.shutdown(); } catch { /* best effort cleanup */ }
   try { await runtime?.shutdownBridge(); } catch { /* best effort cleanup */ }
   try { runtime?.sessionStorage.close(); } catch { /* best effort cleanup */ }
+  const normalizedEvents = normalizeTraceEvents(events);
   await Promise.all([
     writeFile(path.join(absoluteOutputDir, 'identity.json'), JSON.stringify(identity, null, 2) + '\n', 'utf8'),
-    writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
-    writeFile(path.join(absoluteOutputDir, 'trace.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''), 'utf8'),
+    writeFile(path.join(absoluteOutputDir, 'config.json'), JSON.stringify({ profilePath: resolved.profilePath, workingDir: absoluteWorkingDir, stateDir, timeoutMs, turnStallMs, projectContext: { injected: projectContext.injected, reason: projectContext.reason ?? null, tocPath: projectContext.tocPath, digest: projectContext.digest } }, null, 2) + '\n', 'utf8'),
+    writeFile(path.join(absoluteOutputDir, 'trace.raw.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''), 'utf8'),
+    writeFile(path.join(absoluteOutputDir, 'trace.jsonl'), normalizedEvents.map((event) => JSON.stringify(event)).join('\n') + (normalizedEvents.length ? '\n' : ''), 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'usage.json'), JSON.stringify(createUsageArtifact({ ...providerUsage, sessionSnapshot: usage, usageStatus, usageCompleteness, usageSource, missingFields, termination: deadlineKilled ? 'HEADLESS_DEADLINE' : terminationSignal ?? null, observedTokenTotal: usage.tokenUsage > 0 ? usage.tokenUsage : null }), null, 2) + '\n', 'utf8'),
     writeFile(path.join(absoluteOutputDir, 'result.json'), JSON.stringify(result, null, 2) + '\n', 'utf8'),
   ]);

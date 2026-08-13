@@ -131,7 +131,13 @@ Harbor's token fields overlap by design: `n_input_tokens = inputTokens + cacheCr
 
 `identity.json.identityEvidence` identifies whether each actual-identity field came from a provider event, configuration, an operator assertion, or is unknown. These are provenance labels, not independent gateway attestation. Unless a gateway supplies a request-ID lookup or signed billing record, Headless cannot independently prove the actual upstream provider/model and records `gatewayAttested: false`.
 
-`trace.jsonl` is the native Cindy event stream. This adapter currently declares `SUPPORTS_ATIF = False`; consumers that compare trajectories across harnesses need an ATIF converter and must not parse it as Harbor's standard `trajectory.json`.
+`trace.raw.jsonl` is the lossless native Cindy event stream. `trace.jsonl` is
+the normalized analysis stream: when a provider emits incremental `text` or
+`thinking` deltas followed by an `isFinal` snapshot, the earlier deltas are
+removed from the normalized stream so downstream analysis does not count the
+same content twice. This adapter currently declares `SUPPORTS_ATIF = False`;
+consumers that compare trajectories across harnesses need an ATIF converter and
+must not parse it as Harbor's standard `trajectory.json`.
 
 ## Harbor smoke test
 
@@ -200,9 +206,11 @@ underlying Agent/model capability remains authoritative. This setting controls
 Headless context accounting and compaction thresholds, but does not increase an
 upstream model or gateway's actual context capacity.
 
-`run --timeout-ms` is also enforced by Headless itself. Harbor should set its
-outer container deadline slightly later so Headless can abort the Agent and
-persist partial usage and trace artifacts first.
+`run --timeout-ms` is also enforced by Headless itself. Harbor supplies the
+single authoritative trial deadline and the adapter derives the Headless value
+slightly earlier so Headless can abort the Agent and persist partial usage and
+trace artifacts first. Headless derives the Maker turn-stall watchdog from the
+same value and records both effective values in `config.json`.
 
 The Kimi gateway examples are
 `profiles/cindy-production-claude/profile.kimi-k3.example.json` and

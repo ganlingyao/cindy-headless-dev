@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, extractProviderUsage, modelCapabilityAdditions } from './host.js';
+import { classifyFailure, deriveTurnStallMs, extractProviderUsage, modelCapabilityAdditions, normalizeTraceEvents } from './host.js';
 import type { HeadlessProfile } from './profile.js';
 
 describe('Headless result classification', () => {
+  it('derives a watchdog below the outer deadline', () => {
+    expect(deriveTurnStallMs(5_000_000)).toBe(4_000_000);
+    expect(deriveTurnStallMs(1_800_000)).toBe(1_440_000);
+    expect(deriveTurnStallMs(5_000)).toBe(1_000);
+  });
+
+  it('normalizes final snapshots without double-counting deltas', () => {
+    const events = normalizeTraceEvents([
+      { type: 'text', data: { text: 'hel', isFinal: false }, turnAttemptToken: 1 },
+      { type: 'text', data: { text: 'hello', isFinal: true }, turnAttemptToken: 1 },
+      { type: 'done', data: {}, turnAttemptToken: 1 },
+    ]);
+    expect(events).toHaveLength(2);
+    expect(events[0].data).toMatchObject({ text: 'hello', isFinal: true });
+  });
+
   it('classifies a terminal-free successful turn as completed', () => {
     expect(classifyFailure(undefined, undefined, false)).toBe('valid-completed');
   });
