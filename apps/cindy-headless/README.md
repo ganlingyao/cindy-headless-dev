@@ -4,7 +4,7 @@ Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-c
 
 ## Quick start
 
-Authorized internal users can download the current package from the private [Cindy Headless v0.1.7 release](https://github.com/ganlingyao/cindy-headless-releases/releases/tag/cindy-headless-v0.1.7). The dedicated release repository contains both runtime and access-controlled full packages. Verify the selected archive with the attached `SHA256SUMS` before extraction.
+Authorized internal users can download published packages from the private [Cindy Headless Releases](https://github.com/ganlingyao/cindy-headless-releases/releases). The dedicated release repository contains runtime and access-controlled full packages. Verify the selected archive with the attached `SHA256SUMS` before extraction, and confirm its `release-manifest.json.sourceCommit` matches the reviewed source revision.
 
 From a source checkout on Windows:
 
@@ -64,6 +64,13 @@ $env:CINDY_CODEX_BINARY = 'D:\path\to\pinned\codex'
 npm --prefix apps/cindy-headless run bundle:linux
 npm --prefix apps/cindy-headless run verify:bundle
 ```
+
+The bundle is registered against one Benchmark Tool backend. The default is
+`claude-code`; set `CINDY_HEADLESS_AGENT_BACKEND=codex` before `bundle:linux`
+when producing a Codex bundle. `bundle-manifest.json.agentBackend` must match
+the selected profile. Rebuild and publish a new immutable release when changing
+the backend; do not reuse a multi-backend manifest or relax Benchmark Tool
+validation.
 
 `bundle-manifest.json` records the Cindy commit, prompt digests, binary digests, observed versions and Headless contract version. Rebuild it whenever runtime source or pinned binaries change.
 

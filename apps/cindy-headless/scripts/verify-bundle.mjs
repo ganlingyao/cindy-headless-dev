@@ -10,6 +10,7 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bundleDir = path.join(appDir, 'bundle', 'linux-x64');
 const manifest = JSON.parse(await readFile(path.join(bundleDir, 'bundle-manifest.json'), 'utf8'));
 if (manifest.schemaVersion !== 4 || manifest.headlessContractVersion !== 1) throw new Error('unsupported bundle manifest schema or contract');
+if (manifest.agentBackend !== 'claude-code' && manifest.agentBackend !== 'codex') throw new Error('bundle manifest must declare agentBackend');
 for (const [name, expected] of [['node', manifest.nodeBinaryDigest], ['claude', manifest.claudeBinaryDigest], ['codex', manifest.codexBinaryDigest]]) {
   const bytes = await readFile(path.join(bundleDir, 'bin', name));
   const actual = createHash('sha256').update(bytes).digest('hex');
