@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, extractProviderUsage } from './host.js';
+import { classifyFailure, extractProviderUsage, modelCapabilityAdditions } from './host.js';
+import type { HeadlessProfile } from './profile.js';
 
 describe('Headless result classification', () => {
   it('classifies a terminal-free successful turn as completed', () => {
@@ -35,5 +36,16 @@ describe('Headless result classification', () => {
   it('normalizes Codex per-turn usage', () => {
     const usage = extractProviderUsage([{ type: 'done', data: { usage: { promptTokens: 11, cachedTokens: 13, completionTokens: 17, reasoningTokens: 5 } } }], 'codex');
     expect(usage.normalizedUsage).toEqual({ inputTokens: 11, cacheReadTokens: 13, cacheCreationTokens: 0, outputTokens: 17, costUsd: 0 });
+  });
+
+  it('injects an explicit context limit and preserves the agent default when omitted', () => {
+    const profile = {
+      model: { provider: 'moonshot', requestedId: 'moonshot/kimi-k3', contextLimit: 1_048_576 },
+    } as HeadlessProfile;
+    expect(modelCapabilityAdditions(profile)?.availableModels[0]).toMatchObject({
+      id: 'moonshot/kimi-k3',
+      contextWindow: 1_048_576,
+    });
+    expect(modelCapabilityAdditions({ ...profile, model: { ...profile.model, contextLimit: undefined } })).toBeUndefined();
   });
 });

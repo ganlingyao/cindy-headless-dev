@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createMemoryMcpProvider } from './memory-provider.js';
 import { ClaudeCodeAgent, CodexAgent, Maker, MakerMemoryManager, isTerminalTurnEvent, type AgentEvent, type AgentKind, type AgentRuntimeConfig, type AuthAdapter, type BaseAgent, type Logger } from '@cindy/maker-core';
 import { startCodexMemoryBridge, type CodexMemoryBridge } from './codex-memory-bridge.js';
-import { sha256, type ResolvedProfile } from './profile.js';
+import { sha256, type HeadlessProfile, type ResolvedProfile } from './profile.js';
 import { readProjectContext } from './project-context.js';
 import { openHeadlessSqlite } from './sqlite.js';
 import { createUsageArtifact, type NormalizedUsage } from './usage.js';
@@ -44,6 +44,20 @@ function jsonLogger(): Logger {
   return result;
 }
 
+export function modelCapabilityAdditions(profile: HeadlessProfile) {
+  return profile.model.contextLimit
+    ? {
+        availableModels: [{
+          id: profile.model.requestedId,
+          displayName: profile.model.requestedId,
+          contextWindow: profile.model.contextLimit,
+          efforts: [],
+          defaultEffort: null,
+        }],
+      }
+    : undefined;
+}
+
 function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workingDir: string): { maker: Maker; makerMemory: MakerMemoryManager; sessionStorage: SqliteSessionStorage; shutdownBridge(): Promise<void> } {
   const profile = resolved.profile;
   const logger = jsonLogger();
@@ -63,17 +77,7 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workin
   const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, userDataPath: stateDir, memoryEnabled: profile.nativeMemory, makerMemoryEnabled: profile.makerMemory, behaviorFlags: profile.containerSandbox ? { IS_SANDBOX: '1' } : undefined, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
   const memoryProvider = createMemoryMcpProvider({ getManager: () => makerMemory, logger: logger.child('cindy-memory-mcp') });
   const memoryProviders = profile.makerMemory ? [memoryProvider] : [];
-  const capabilityAdditions = profile.model.contextLimit
-    ? {
-        availableModels: [{
-          id: profile.model.requestedId,
-          displayName: profile.model.requestedId,
-          contextWindow: profile.model.contextLimit,
-          efforts: [],
-          defaultEffort: null,
-        }],
-      }
-    : undefined;
+  const capabilityAdditions = modelCapabilityAdditions(profile);
   let bridge: CodexMemoryBridge | undefined;
   let bridgePromise: Promise<CodexMemoryBridge> | undefined;
   let agent: BaseAgent;
@@ -233,6 +237,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   let deadlineKilled = false;
   let terminationSignal: NodeJS.Signals | undefined;
   let terminalError: AgentEvent | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let rejectTermination!: (cause: Error) => void;
   const termination = new Promise<void>((_, reject) => { rejectTermination = reject; });
   const terminate = (signal: NodeJS.Signals) => {
@@ -258,9 +263,11 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
     for (const turn of turns.length > 0 ? turns : [task]) {
       terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
       await session.send(turn);
-      // Harbor owns the agent deadline. Keep the SDK session alive until Harbor
-      // terminates the process instead of racing a second local watchdog.
-      await Promise.race([terminal, termination]);
+      const deadline = new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('HEADLESS_DEADLINE_EXCEEDED')), timeoutMs);
+      });
+      await Promise.race([terminal, termination, deadline]);
+      if (timer) { clearTimeout(timer); timer = undefined; }
     }
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
@@ -273,6 +280,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
       try { await runtime?.maker.shutdown(); } catch { /* best-effort force kill */ }
     }
   } finally {
+    if (timer) clearTimeout(timer);
     process.off('SIGTERM', onSigterm);
     process.off('SIGINT', onSigint);
   }

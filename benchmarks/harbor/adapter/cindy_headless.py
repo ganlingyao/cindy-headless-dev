@@ -383,7 +383,12 @@ class CindyHeadlessAgent(BaseAgent):
     @staticmethod
     @override
     def name() -> str:
-        return AgentName.CINDY_PRODUCTION.value
+        # Harbor 0.20 does not yet expose CINDY_PRODUCTION in AgentName. Keep
+        # the vendored adapter importable through a custom import_path while
+        # remaining identical in behavior once the Harbor integration patch
+        # adds the enum member.
+        member = getattr(AgentName, "CINDY_PRODUCTION", None)
+        return member.value if member is not None else "cindy-production"
 
     @classmethod
     @override

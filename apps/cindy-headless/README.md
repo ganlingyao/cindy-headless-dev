@@ -157,6 +157,22 @@ Before any scored benchmark, freeze and verify the Cindy commit, Headless commit
 
 ## Profiles
 
+`model.contextLimit` is optional. When present, Headless injects that exact
+context window into Maker Core for the selected model; when omitted, the
+underlying Agent/model capability remains authoritative. This setting controls
+Headless context accounting and compaction thresholds, but does not increase an
+upstream model or gateway's actual context capacity.
+
+`run --timeout-ms` is also enforced by Headless itself. Harbor should set its
+outer container deadline slightly later so Headless can abort the Agent and
+persist partial usage and trace artifacts first.
+
+The Kimi gateway examples are
+`profiles/cindy-production-claude/profile.kimi-k3.example.json` and
+`profiles/cindy-claude-parity-all-off/profile.kimi-k3.example.json`. They pin a
+1M declared context window; supply gateway credentials through the ignored
+local config file, never by editing these tracked profiles.
+
 Production profiles are pinned and should be changed only for an explicit experiment:
 
 - `cindy-production-claude`

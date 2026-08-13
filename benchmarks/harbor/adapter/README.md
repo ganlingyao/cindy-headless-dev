@@ -10,7 +10,15 @@ sourced from the Harbor repository and kept in lockstep with the Harbor
 |------|-----------------|---------|
 | `cindy_headless.py` | `src/harbor/agents/installed/cindy_headless.py` | Headless runtime adapter — launches Cindy Headless CLI inside the trial container |
 | `test_cindy_headless.py` | `tests/unit/agents/installed/test_cindy_headless.py` | Unit tests for the adapter |
-| `context.py` | `src/harbor/models/agent/context.py` | AgentContext model with `harbor_agent_timeout_sec` metadata field |
+| `context.py` | `src/harbor/models/agent/context.py` | AgentContext model with the private execution deadline passed by Harbor |
+
+This directory is a reviewable snapshot of a Harbor integration patch, not a
+drop-in replacement for only one Harbor module. Full built-in Agent support
+also requires the matching Harbor changes to `models/agent/name.py`,
+`agents/factory.py`, and the evaluation runner that calls
+`AgentContext.set_execution_timeout_sec()`. Without those patches the adapter
+can still be imported by a custom `import_path`, but Harbor will not supply its
+outer trial deadline through `AgentContext`.
 
 ## Timeout enforcement
 
@@ -21,9 +29,8 @@ The adapter enforces the runtime deadline through two mechanisms:
 2. **Outer deadline**: `timeout_sec` is passed to container execution, replacing the
    old `timeout_sec=None` default
 
-Together with the Harbor trial's `agent_task.cancel()` (hard timeout) and the
-Headless host's force-kill on deadline, this forms a three-layer defence against
-runaway agent processes.
+Together with Headless's own `--timeout-ms` timer and the Harbor trial's hard
+task cancellation, this forms a three-layer defence against runaway processes.
 
 ## Syncing with Harbor
 
@@ -34,3 +41,7 @@ cp $HARBOR/src/harbor/agents/installed/cindy_headless.py benchmarks/harbor/adapt
 cp $HARBOR/tests/unit/agents/installed/test_cindy_headless.py benchmarks/harbor/adapter/test_cindy_headless.py
 cp $HARBOR/src/harbor/models/agent/context.py benchmarks/harbor/adapter/context.py
 ```
+
+After syncing, also review the corresponding Harbor factory, AgentName, and
+evaluation-runner commits. Comparing only these three copied files is not
+sufficient to prove that the integration contract remains complete.
