@@ -3,8 +3,9 @@
   "headlessContractVersion": 1,
   "agentBackend": "claude-code",
   "cindyHeadlessVersion": "0.1.8",
-  "cindyCommit": "0340c16e6c9cf13a4cc04c72f2aa74de5065a346",
+  "cindyCommit": "e6299275c30066b2a1cc6427fbaa30175e8162fe",
   "lockfileDigest": "f5e65e6e1610e825efcdc4caf601283a8dc990641cf568e7556e844e4ef73697",
+  "cliDigest": "ad52193dfa10bc09eeed4ccf4e2ab0c37e894083e6ce9cf2ed53384bcfe1ece7",
   "systemPromptDigest": "17fc96a52444260aa44b85c0de216b5e29086a4e86202d8840f8dc1ba9391221",
   "codexSystemPromptDigest": "17fc96a52444260aa44b85c0de216b5e29086a4e86202d8840f8dc1ba9391221",
   "nodeBinaryDigest": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
@@ -16,5 +17,5 @@
   "observedClaudeVersion": "2.1.219 (Claude Code)",
   "observedCodexVersion": "codex-cli 0.145.0",
   "platform": "linux-x64",
-  "generatedAt": "2026-08-13T16:24:02+08:00"
+  "generatedAt": "2026-08-13T16:39:25+08:00"
 }
