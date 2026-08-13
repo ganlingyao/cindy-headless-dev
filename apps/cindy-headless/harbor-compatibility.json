@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "product": "cindy-headless",
+  "harborRepository": "https://github.com/harbor-framework/harbor.git",
+  "harborCommit": "fix/cindy-adapter-eval-contract",
+  "adapterImport": "harbor.agents.installed.cindy_headless:CindyHeadlessAgent",
+  "adapterSnapshot": "src/harbor/agents/installed/cindy_headless.py",
+  "requiredFeatures": ["cindy-production-agent", "execution-timeout", "agent-context-usage", "bundle-digest-validation"],
+  "pathPolicy": "All bundle_dir and profile_path values must be workspace-relative; Harbor resolves them from --workspace-root."
+}

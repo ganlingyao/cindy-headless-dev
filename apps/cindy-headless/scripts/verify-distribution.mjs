@@ -9,15 +9,7 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'cindy-headless-distribution-'));
 try {
-  const yamlPath = path.join(temporary, 'smoke.yaml');
-  await execFileAsync('node', [path.join(repoRoot, 'benchmarks', 'harbor', 'generate-smoke-config.mjs'), '--backend', 'codex', '--run-id', 'portable-smoke', '--output', yamlPath, '--jobs-dir', path.join(temporary, 'jobs')]);
-  const yaml = await readFile(yamlPath, 'utf8');
   const bundleManifest = JSON.parse(await readFile(path.join(repoRoot, 'apps', 'cindy-headless', 'bundle', 'linux-x64', 'bundle-manifest.json'), 'utf8'));
-  assert.match(yaml, new RegExp(`version: ${bundleManifest.cindyHeadlessVersion.replaceAll('.', '\\.')}`));
-  assert.match(yaml, /manifest_digest: [a-f0-9]{64}/);
-  assert.doesNotMatch(yaml, /apiKey|sk-[A-Za-z0-9_-]{12,}/);
-  assert.ok(yaml.includes(repoRoot.replace(/\\/g, '/')), 'generated config must resolve the current checkout path');
-  assert.match(yaml, /tasks\/hello-world|tasks\\hello-world/);
   await execFileAsync('node', [path.join(repoRoot, 'apps', 'cindy-headless', 'scripts', 'package-release.mjs')], { env: { ...process.env, CINDY_HEADLESS_RELEASE_DIR: path.join(temporary, 'release') } });
   const release = JSON.parse(await readFile(path.join(temporary, 'release', 'release-manifest.json'), 'utf8'));
   assert.equal(release.product, 'cindy-headless');
@@ -30,8 +22,8 @@ try {
   await execFileAsync('tar', ['-xzf', path.relative(temporary, archive)], { cwd: temporary });
   const releaseRoot = path.join(temporary, 'cindy-headless');
   await readFile(path.join(releaseRoot, 'dist', 'cli.cjs'));
-  await readFile(path.join(releaseRoot, 'cindy_harbor', 'cindy_headless_agent.py'));
-  await assert.rejects(readFile(path.join(releaseRoot, 'harbor', '__init__.py')));
+  await readFile(path.join(releaseRoot, 'harbor-compatibility.json'));
+  await assert.rejects(readFile(path.join(releaseRoot, 'cindy_harbor', 'cindy_headless_agent.py')));
   await readFile(path.join(releaseRoot, 'prepare-binaries.sh'));
   await assert.rejects(readFile(path.join(releaseRoot, 'bin', 'claude')));
   const readme = await readFile(path.join(releaseRoot, 'README.md'), 'utf8');
@@ -47,12 +39,8 @@ try {
     }
   }
   await scan(releaseRoot);
-  const releaseYaml = path.join(temporary, 'release-smoke.yaml');
-  await execFileAsync('node', [path.join(releaseRoot, 'cindy_harbor', 'generate-smoke-config.mjs'), '--backend', 'codex', '--run-id', 'release-smoke', '--output', releaseYaml, '--jobs-dir', path.join(temporary, 'release-jobs')]);
-  const releaseConfig = await readFile(releaseYaml, 'utf8');
-  assert.ok(releaseConfig.includes(releaseRoot.replace(/\\/g, '/')));
-  assert.match(releaseConfig, /import_path: cindy_harbor\.cindy_headless_agent:CindyHeadlessAgent/);
-  assert.match(releaseConfig, new RegExp(`version: ${release.version.replaceAll('.', '\\.')}`));
+  const compatibility = JSON.parse(await readFile(path.join(releaseRoot, 'harbor-compatibility.json'), 'utf8'));
+  assert.equal(typeof compatibility.harborCommit, 'string');
   console.log(JSON.stringify({ ok: true }));
 } finally {
   await rm(temporary, { recursive: true, force: true });

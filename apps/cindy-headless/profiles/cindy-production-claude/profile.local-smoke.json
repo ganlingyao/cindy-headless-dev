@@ -2,7 +2,7 @@
   "id": "cindy-production-claude-local-smoke",
   "version": 1,
   "agentBackend": "claude-code",
-  "agentBinaryPath": "D:/Work/cindy-headless-issue-127/apps/claude-code-bin/win32-x64/claude.exe",
+  "agentBinaryPath": "../../bundle/linux-x64/bin/claude",
   "agentBinaryVersion": "2.1.219",
   "supportedModelIds": ["claude-sonnet-4-6"],
   "model": {

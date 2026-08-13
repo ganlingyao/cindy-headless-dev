@@ -127,10 +127,10 @@ export function classifyFailure(error: string | undefined, terminalError: AgentE
   if (!error && !terminalError) return 'valid-completed';
   const text = `${error ?? ''} ${terminalError ? JSON.stringify(terminalError.data) : ''}`.toLowerCase();
   if (/native binary not found|executable.*not found|enoent|no such file or directory/.test(text)) return 'infra-agent-setup';
-  if (/invalid_request_error|input tag .* does not match|unsupported content|bad request|\b400\b/.test(text)) return 'infra-invalid-request';
   if (/auth|api.?key|unauthorized|401/.test(text)) return 'infra-invalid-auth';
+  if (/invalid_request_error|input tag .* does not match|unsupported content|bad request|\b4\d\d\b/.test(text)) return 'infra-invalid-request';
   if (/model.*(not found|unsupported)|route|requested.*effective/.test(text)) return 'infra-invalid-route';
-  if (/rate.?limit|overload|provider|network|econn|timeout|stream disconnected|broken pipe|connection reset|connection aborted|socket hang up|connection closed mid-response/.test(text)) return 'infra-invalid-provider';
+  if (/\b5\d\d\b|rate.?limit|overload|provider|network|econn|timeout|stream disconnected|sdk[_ -]?stream[_ -]?crashed|broken pipe|connection reset|connection aborted|socket hang up|connection closed mid-response|sigkill|killed by signal/.test(text)) return 'infra-invalid-provider';
   return 'valid-agent-error';
 }
 
@@ -319,7 +319,14 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const actualModelId = process.env.CINDY_ACTUAL_MODEL ?? (observedModels.length === 1 ? observedModels[0] : null);
   const upstreamProvider = process.env.CINDY_UPSTREAM_PROVIDER ?? null;
   const requestIds = [...new Set(events.map((event) => event.agentMeta?.requestId).filter((id): id is string => typeof id === 'string'))];
-  const identity = { schemaVersion: 2, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, cindyCliVersion: CINDY_HEADLESS_VERSION, harborVersion: process.env.HARBOR_VERSION ?? null, litellmVersion: process.env.LITELLM_VERSION ?? null, requestedModelId: profile.model.requestedId, actualModelId, provider: profile.model.provider, actualEndpoint, upstreamProvider, routeId: profile.model.routeId ?? null, observedModels, requestIds, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
+  const identityEvidence = {
+    actualModelId: process.env.CINDY_ACTUAL_MODEL ? 'operator-asserted' : observedModels.length === 1 ? 'provider-event' : 'unknown',
+    actualEndpoint: actualEndpoint ? 'configured' : 'unknown',
+    upstreamProvider: process.env.CINDY_UPSTREAM_PROVIDER ? 'operator-asserted' : 'unknown',
+    requestIds: requestIds.length > 0 ? 'provider-event' : 'unknown',
+    gatewayAttested: false,
+  };
+  const identity = { schemaVersion: 2, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, cindyCliVersion: CINDY_HEADLESS_VERSION, harborVersion: process.env.HARBOR_VERSION ?? null, litellmVersion: process.env.LITELLM_VERSION ?? null, requestedModelId: profile.model.requestedId, actualModelId, provider: profile.model.provider, actualEndpoint, upstreamProvider, routeId: profile.model.routeId ?? null, observedModels, requestIds, identityEvidence, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
   const result = { schemaVersion: 2, status, resultClass: standard, reward, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, sessionId: session?.id ?? null, turnsCount: turns.length > 0 ? turns.length : 1, durationMs: Date.now() - startedAt, error: effectiveError ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length, retries: Number(process.env.CINDY_RETRY_COUNT ?? '0') || 0, replacesAttemptId: process.env.CINDY_REPLACES_ATTEMPT_ID ?? null };
   try { await runtime?.maker.shutdown(); } catch { /* best effort cleanup */ }
   try { await runtime?.shutdownBridge(); } catch { /* best effort cleanup */ }

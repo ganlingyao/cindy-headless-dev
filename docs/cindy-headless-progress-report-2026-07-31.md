@@ -147,12 +147,12 @@ result.json
 
 ### 2.7 Harbor adapter
 
-目录：`benchmarks/harbor`
+历史快照：`benchmarks/harbor`（已移除；正式实现位于 Harbor 内置 adapter）。
 
 使用 Harbor 0.20 的标准自定义 Agent 机制：
 
 ```text
-agent.import_path: cindy_headless_agent:CindyHeadlessAgent
+历史 import_path：`cindy_headless_agent:CindyHeadlessAgent`；当前正式 import 为 `harbor.agents.installed.cindy_headless:CindyHeadlessAgent`。
 ```
 
 Adapter 的职责：
@@ -420,7 +420,7 @@ Harbor trial 本身成功，但部分 Windows 控制台使用 GBK 时无法打�
 
 ```text
 D:\Work\cindy-headless-issue-127\apps\cindy-headless
-D:\Work\cindy-headless-issue-127\benchmarks\harbor
+历史工作区路径（不再作为运行时依赖）：`D:\Work\cindy-headless-issue-127\benchmarks\harbor`
 ```
 
 设计文档：

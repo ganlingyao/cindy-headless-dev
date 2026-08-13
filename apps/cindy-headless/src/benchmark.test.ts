@@ -28,7 +28,10 @@ describe('benchmark plan', () => {
       { variantId: 'raw', armIndex: 0, modelId: 'model-1', taskId: 'c', repetition: 1, reward: 0, resultClass: 'FAILED_AGENT', benchmark: 'terminal-bench', durationMs: 12, upstreamProvider: 'anthropic' },
     ]);
     expect(summary).toMatchObject({ pairCount: 3, completePairCount: 2, incompletePairCount: 1, bothPass: 1, bothFail: 0, firstArmOnlyPass: 1, secondArmOnlyPass: 0, totalInputTokens: 21, totalCacheTokens: 5, totalOutputTokens: 11 });
-    expect(summary.totalCostUsd).toBeCloseTo(0.3);
+    expect(summary.totalCostUsd).toBeNull();
+    expect(summary.knownCostUsd).toBeCloseTo(0.3);
+    expect(summary.costKnownCount).toBe(2);
+    expect(summary.costMissingCount).toBe(3);
     expect(summary.byAgent.raw.trials).toBe(3);
     expect(summary.resultClasses.FAILED_AGENT).toBe(1);
     expect(summary.upstreamProviders.anthropic).toBe(1);
@@ -43,11 +46,15 @@ describe('benchmark plan', () => {
     expect(shouldRetry('ERRORED_INFRA', 1, configured).retry).toBe(true);
     expect(shouldRetry('FAILED_AGENT', 1, configured).retry).toBe(false);
     expect(shouldStop([{ ...results('a'), resultClass: 'FAILED_AGENT' }, { ...results('b'), resultClass: 'ERRORED_INFRA' }], configured).stop).toBe(true);
+    expect(shouldStop([{ ...results('a') }], configured)).toMatchObject({ stop: true, reason: 'cost-unknown' });
+    expect(shouldStop([{ ...results('a'), costUsd: 1 }], configured)).toMatchObject({ stop: true, reason: 'cost-limit' });
   });
   it('creates an auditable report and freezes hard-30 only from independent history', () => {
     const report = createEvaluationReport(validateManifest(manifest), [{ ...results('a'), reward: 1, resultClass: 'PASSED', benchmark: 'tb' }]);
     expect(report.trialCount).toBe(1);
+    expect(report.schemaVersion).toBe(2);
     expect(report.manifestDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(report.totals).toMatchObject({ costUsd: null, knownCostUsd: 0, costKnownCount: 0, costMissingCount: 1 });
     expect(() => freezeHard30([{ taskId: 'only', solveRate: 0.1 }])).toThrow(/independent/);
     const frozen = freezeHard30(Array.from({ length: 30 }, (_, i) => ({ taskId: `task-${i}`, solveRate: i / 30 })));
     expect(frozen.taskIds).toHaveLength(30);

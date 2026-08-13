@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { build } from 'esbuild';
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.resolve(appDir, '..', '..');
 const outputDir = path.join(appDir, 'bundle', 'linux-x64');
 const binaryCache = path.resolve(process.env.CINDY_HEADLESS_BINARY_CACHE ?? path.join(appDir, '.cache', 'bin', 'linux-x64'));
 const binary = process.env.CINDY_CLAUDE_BINARY ?? path.join(binaryCache, 'claude');
@@ -15,6 +16,8 @@ const nodeMetadata = JSON.parse(await readFile(path.join(appDir, 'runtime', 'nod
 const nodeBinary = process.env.CINDY_NODE_BINARY ?? path.join(binaryCache, 'node');
 const execFileAsync = promisify(execFile);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+const { stdout: worktreeStatus } = await execFileAsync('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot });
+if (worktreeStatus.trim()) throw new Error('Refusing to build a release bundle from a dirty worktree; commit the reviewed source first');
 
 async function ensureNodeRuntime() {
   const existing = await stat(nodeBinary).catch(() => null);
@@ -75,13 +78,13 @@ const productionPrompt = [desktopHost, desktopClaude].map((part) => part.trim())
 const codexPrompt = [desktopHost, desktopCodex].map((part) => part.trim()).filter(Boolean).join('\n\n') + '\n';
 await writeFile(path.join(outputDir, 'prompt.md'), productionPrompt, 'utf8');
 await writeFile(path.join(outputDir, 'codex-prompt.md'), codexPrompt, 'utf8');
-const repoRoot = path.resolve(appDir, '..', '..');
 const packageJson = JSON.parse(await readFile(path.join(appDir, 'package.json'), 'utf8'));
-const [{ stdout: commit }, lockfile, binaryBytes, codexBinaryBytes, nodeBinaryBytes] = await Promise.all([
+const [{ stdout: commit }, { stdout: commitDate }, lockfile, binaryBytes, codexBinaryBytes, nodeBinaryBytes] = await Promise.all([
   execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }),
+  execFileAsync('git', ['show', '-s', '--format=%cI', 'HEAD'], { cwd: repoRoot }),
   readFile(path.join(repoRoot, 'pnpm-lock.yaml')),
   readFile(binary),
   readFile(codexBinary),
   readFile(nodeBinary),
 ]);
-await writeFile(path.join(outputDir, 'bundle-manifest.json'), JSON.stringify({ schemaVersion: 4, headlessContractVersion: 1, cindyHeadlessVersion: packageJson.version, cindyCommit: commit.trim(), lockfileDigest: sha256(lockfile), systemPromptDigest: sha256(productionPrompt), codexSystemPromptDigest: sha256(codexPrompt), nodeBinaryDigest: sha256(nodeBinaryBytes), nodeVersion: nodeMetadata.version, claudeBinaryDigest: sha256(binaryBytes), codexBinaryDigest: sha256(codexBinaryBytes), claudeCodeVersion: latest.version, codexVersion: codexLatest.version, observedClaudeVersion, observedCodexVersion, platform: 'linux-x64', generatedAt: new Date().toISOString() }, null, 2) + '\n');
+await writeFile(path.join(outputDir, 'bundle-manifest.json'), JSON.stringify({ schemaVersion: 4, headlessContractVersion: 1, cindyHeadlessVersion: packageJson.version, cindyCommit: commit.trim(), lockfileDigest: sha256(lockfile), systemPromptDigest: sha256(productionPrompt), codexSystemPromptDigest: sha256(codexPrompt), nodeBinaryDigest: sha256(nodeBinaryBytes), nodeVersion: nodeMetadata.version, claudeBinaryDigest: sha256(binaryBytes), codexBinaryDigest: sha256(codexBinaryBytes), claudeCodeVersion: latest.version, codexVersion: codexLatest.version, observedClaudeVersion, observedCodexVersion, platform: 'linux-x64', generatedAt: commitDate.trim() }, null, 2) + '\n');

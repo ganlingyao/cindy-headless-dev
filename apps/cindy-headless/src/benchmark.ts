@@ -51,7 +51,7 @@ export interface PairedRunResult {
 }
 
 export interface EvaluationReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   manifestDigest: string;
   trialCount: number;
   byBenchmark: PairedSummary['byBenchmark'];
@@ -60,7 +60,7 @@ export interface EvaluationReport {
   confidenceIntervals: PairedSummary['confidenceIntervals'];
   paired: Pick<PairedSummary, 'pairCount' | 'completePairCount' | 'incompletePairCount' | 'bothPass' | 'bothFail' | 'firstArmOnlyPass' | 'secondArmOnlyPass'>;
   unsupported: Array<{ variantId: string; modelId: string; reason: string }>;
-  totals: { costUsd: number; inputTokens: number; cacheTokens: number; outputTokens: number; durationMs: number };
+  totals: { costUsd: number | null; knownCostUsd: number; costKnownCount: number; costMissingCount: number; inputTokens: number; cacheTokens: number; outputTokens: number; durationMs: number };
   upstreamProviders: Record<string, number>;
   usageCompleteness: Record<'exact' | 'lower-bound' | 'incomplete', number>;
 }
@@ -73,7 +73,10 @@ export interface PairedSummary {
   bothFail: number;
   firstArmOnlyPass: number;
   secondArmOnlyPass: number;
-  totalCostUsd: number;
+  totalCostUsd: number | null;
+  knownCostUsd: number;
+  costKnownCount: number;
+  costMissingCount: number;
   totalInputTokens: number;
   totalCacheTokens: number;
   totalOutputTokens: number;
@@ -96,9 +99,11 @@ export function shouldRetry(resultClass: PairedRunResult['resultClass'], attempt
   return { retry: false, reason: 'passed', nextAttempt: attemptNumber };
 }
 
-export function shouldStop(results: PairedRunResult[], manifest: BenchmarkManifest): { stop: boolean; reason: 'cost-limit' | 'failure-limit' | null } {
-  const cost = results.reduce((sum, result) => sum + (result.costUsd ?? 0), 0);
+export function shouldStop(results: PairedRunResult[], manifest: BenchmarkManifest): { stop: boolean; reason: 'cost-limit' | 'cost-unknown' | 'failure-limit' | null } {
+  const knownCosts = results.filter((result): result is PairedRunResult & { costUsd: number } => Number.isFinite(result.costUsd));
+  const cost = knownCosts.reduce((sum, result) => sum + result.costUsd, 0);
   if (manifest.budget?.maxCostUsd !== undefined && cost >= manifest.budget.maxCostUsd) return { stop: true, reason: 'cost-limit' };
+  if (manifest.budget?.maxCostUsd !== undefined && knownCosts.length !== results.length) return { stop: true, reason: 'cost-unknown' };
   const failures = results.filter((result) => result.resultClass === 'FAILED_AGENT' || result.resultClass === 'ERRORED_INFRA').length;
   if (manifest.budget?.stopAfterFailures !== undefined && failures >= manifest.budget.stopAfterFailures) return { stop: true, reason: 'failure-limit' };
   return { stop: false, reason: null };
@@ -179,7 +184,9 @@ function passed(result: PairedRunResult | undefined): boolean {
 
 export function summarizePairedResults(results: PairedRunResult[]): PairedSummary {
   const pairs = new Map<string, PairedRunResult[]>();
-  let totalCostUsd = 0;
+  let knownCostUsd = 0;
+  let costKnownCount = 0;
+  let costMissingCount = 0;
   let totalInputTokens = 0;
   let totalCacheTokens = 0;
   let totalOutputTokens = 0;
@@ -196,7 +203,12 @@ export function summarizePairedResults(results: PairedRunResult[]): PairedSummar
     const pair = pairs.get(key) ?? [];
     pair.push(result);
     pairs.set(key, pair);
-    totalCostUsd += result.costUsd ?? 0;
+    if (Number.isFinite(result.costUsd)) {
+      knownCostUsd += result.costUsd as number;
+      costKnownCount += 1;
+    } else {
+      costMissingCount += 1;
+    }
     totalInputTokens += result.inputTokens ?? 0;
     totalCacheTokens += result.cacheTokens ?? 0;
     totalOutputTokens += result.outputTokens ?? 0;
@@ -229,7 +241,8 @@ export function summarizePairedResults(results: PairedRunResult[]): PairedSummar
     else secondArmOnlyPass += 1;
   }
   for (const [agent, stats] of Object.entries(byAgent)) confidenceIntervals[agent] = { successes: stats.passed, trials: stats.trials, ...wilson(stats.passed, stats.trials) };
-  return { pairCount: pairs.size, completePairCount, incompletePairCount: pairs.size - completePairCount, bothPass, bothFail, firstArmOnlyPass, secondArmOnlyPass, totalCostUsd, totalInputTokens, totalCacheTokens, totalOutputTokens, byBenchmark, byAgent, resultClasses, totalDurationMs, upstreamProviders, usageCompleteness, confidenceIntervals };
+  const totalCostUsd = costMissingCount === 0 ? knownCostUsd : null;
+  return { pairCount: pairs.size, completePairCount, incompletePairCount: pairs.size - completePairCount, bothPass, bothFail, firstArmOnlyPass, secondArmOnlyPass, totalCostUsd, knownCostUsd, costKnownCount, costMissingCount, totalInputTokens, totalCacheTokens, totalOutputTokens, byBenchmark, byAgent, resultClasses, totalDurationMs, upstreamProviders, usageCompleteness, confidenceIntervals };
 }
 
 export function expandPlan(manifest: BenchmarkManifest): { schemaVersion: 1; manifestDigest: string; cells: BenchmarkCell[] } {
@@ -250,7 +263,7 @@ export function createEvaluationReport(manifest: BenchmarkManifest, results: Pai
   const supported = new Set(manifest.variants.flatMap((variant) => manifest.modelIds.filter((model) => variant.supportedModelIds.includes(model)).map((model) => `${variant.id}:${model}`)));
   const unsupported = manifest.variants.flatMap((variant) => manifest.modelIds.filter((model) => !supported.has(`${variant.id}:${model}`)).map((model) => ({ variantId: variant.id, modelId: model, reason: 'variant does not declare support for exact model' })));
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     manifestDigest: sha256(JSON.stringify(manifest)),
     trialCount: results.length,
     byBenchmark: summary.byBenchmark,
@@ -259,7 +272,7 @@ export function createEvaluationReport(manifest: BenchmarkManifest, results: Pai
     confidenceIntervals: summary.confidenceIntervals,
     paired: { pairCount: summary.pairCount, completePairCount: summary.completePairCount, incompletePairCount: summary.incompletePairCount, bothPass: summary.bothPass, bothFail: summary.bothFail, firstArmOnlyPass: summary.firstArmOnlyPass, secondArmOnlyPass: summary.secondArmOnlyPass },
     unsupported,
-    totals: { costUsd: summary.totalCostUsd, inputTokens: summary.totalInputTokens, cacheTokens: summary.totalCacheTokens, outputTokens: summary.totalOutputTokens, durationMs: summary.totalDurationMs },
+    totals: { costUsd: summary.totalCostUsd, knownCostUsd: summary.knownCostUsd, costKnownCount: summary.costKnownCount, costMissingCount: summary.costMissingCount, inputTokens: summary.totalInputTokens, cacheTokens: summary.totalCacheTokens, outputTokens: summary.totalOutputTokens, durationMs: summary.totalDurationMs },
     upstreamProviders: summary.upstreamProviders,
     usageCompleteness: summary.usageCompleteness,
   };

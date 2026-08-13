@@ -48,12 +48,7 @@ await mkdir(path.join(runtimeRoot, 'tools', 'claude'), { recursive: true });
 await mkdir(path.join(runtimeRoot, 'tools', 'codex'), { recursive: true });
 await cp(path.join(repoRoot, 'tools', 'claude', 'latest.json'), path.join(runtimeRoot, 'tools', 'claude', 'latest.json'));
 await cp(path.join(repoRoot, 'tools', 'codex', 'latest.json'), path.join(runtimeRoot, 'tools', 'codex', 'latest.json'));
-const releaseHarbor = path.join(runtimeRoot, 'cindy_harbor');
-await mkdir(releaseHarbor, { recursive: true });
-for (const item of ['__init__.py', 'cindy_headless_agent.py', 'collect_results.py', 'generate-smoke-config.mjs', 'run-smoke.ps1', 'run-smoke.sh', 'README.md', 'manifest.example.json']) {
-  await cp(path.join(repoRoot, 'benchmarks', 'harbor', item), path.join(releaseHarbor, item));
-}
-await cp(path.join(repoRoot, 'benchmarks', 'harbor', 'tasks'), path.join(releaseHarbor, 'tasks'), { recursive: true });
+await cp(path.join(appDir, 'harbor-compatibility.json'), path.join(runtimeRoot, 'harbor-compatibility.json'));
 await writeFile(path.join(runtimeRoot, 'prepare-binaries.sh'), '#!/usr/bin/env sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nCINDY_HEADLESS_METADATA_ROOT="$ROOT" CINDY_HEADLESS_BINARY_CACHE="$ROOT/bin" "$ROOT/bin/node" "$ROOT/scripts/ensure-agent-binaries.mjs"\n');
 await writeFile(path.join(runtimeRoot, 'prepare-binaries.ps1'), "$ErrorActionPreference = 'Stop'\n$root = $PSScriptRoot\n$env:CINDY_HEADLESS_METADATA_ROOT = $root\n$env:CINDY_HEADLESS_BINARY_CACHE = Join-Path $root 'bin'\nnode (Join-Path $root 'scripts\\ensure-agent-binaries.mjs')\n");
 const files = [await archive(`cindy-headless-linux-x64-runtime-${version}`, runtimeStage)];

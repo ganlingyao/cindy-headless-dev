@@ -12,7 +12,8 @@ From a source checkout on Windows:
 Copy-Item apps/cindy-headless/config.example.json apps/cindy-headless/config.local.json
 # Set the gateway URL/key in the ignored config.local.json.
 ./apps/cindy-headless/scripts/setup.ps1
-./benchmarks/harbor/run-smoke.ps1 -Backend codex
+cd ..\..\AgentTest\harbor
+uv run harbor eval execute <freeze-id> --workspace-root . --approve
 ```
 
 From the runtime GitHub Release asset, extract `cindy-headless-linux-x64-runtime-<version>.tar.gz`, configure the gateway, and run `prepare-binaries.ps1` or `prepare-binaries.sh`. The public archive is the Cindy Headless runtime, not a Claude Code or Codex redistribution. The preparation script downloads the exact pinned Agent runtimes from their official sources and verifies SHA-256 before use.
@@ -24,7 +25,7 @@ apps/cindy-headless/src/       Runtime, profiles, benchmark and artifact code
 apps/cindy-headless/profiles/  Pinned backend/model/profile definitions
 apps/cindy-headless/scripts/   Bundle and compatibility verification scripts
 apps/cindy-headless/bundle/    Reproducible Linux x64 bundle output
-benchmarks/harbor/              Harbor adapter, jobs, collector and smoke wrapper
+apps/cindy-headless/harbor-compatibility.json  Harbor adapter contract and pinned features
 ```
 
 ## Prerequisites
@@ -89,11 +90,17 @@ npm --prefix apps/cindy-headless run verify:distribution:full
 
 The output directory contains both the normal runtime archive and `cindy-headless-linux-x64-full-<version>.tar.gz`. The full archive includes the verified Linux x64 Claude Code and Codex binaries under `bin/`, so its recipient can extract and run it in Linux, WSL or the Harbor Linux task container without the initial binary download. It is not a native Windows Agent package. `SHA256SUMS`, `bundle-manifest.json` and `release-manifest.json` must travel with the archive and be checked before use.
 
-The extracted distribution uses `cindy_harbor/` for its Harbor adapter. This distinct Python package name is required: naming it `harbor/` would shadow Harbor's own CLI package when the distribution root is added to `PYTHONPATH`. Run the packaged smoke wrapper from `cindy_harbor/run-smoke.ps1` or `cindy_harbor/run-smoke.sh`.
+The runtime package does not contain a Harbor adapter. Formal Benchmark runs
+use the pinned Harbor fork and its single built-in adapter:
+`harbor.agents.installed.cindy_headless:CindyHeadlessAgent`. Run Harbor from
+its own checkout and pass `--workspace-root` there. Keep `bundle_dir` and
+`profile_path` relative to that root; never copy an adapter into this repo or
+put a maintainer's local path in a job file. The required adapter contract is
+recorded in `harbor-compatibility.json`.
 
 Treat this as an internal artifact, not a public GitHub Release asset. Store it only in an access-controlled artifact system, retain `VENDOR-BINARIES-NOTICE.txt`, and review the applicable vendor redistribution terms before sharing it outside the organization. The included `prepare-binaries` scripts remain available for repairing or refreshing the pinned binaries, but are not required for the first run of a verified full package.
 
-Before publishing, run `scripts/verify-clean-install.ps1` from a pushed branch. It clones into a temporary directory and verifies that the documented source workflow does not depend on the maintainer's working tree. Add `-RunSmoke` when gateway credentials and Harbor are available.
+Before publishing, run `scripts/verify-clean-install.ps1` from a pushed branch. It clones into a temporary directory and verifies that the documented source workflow does not depend on the maintainer's working tree. Run the Harbor smoke separately from the Harbor checkout when gateway credentials and Docker are available.
 
 ## CLI
 
@@ -111,26 +118,47 @@ Run a local task:
 node apps/cindy-headless/dist/cli.cjs run --profile <profile.json> --task "Inspect the repository and report the result" --working-dir . --output-dir results
 ```
 
-The output directory contains identity, config, trace, usage and result artifacts. Prompt bodies and secrets are excluded. Usage artifacts use schema 2 and explicitly report `COMPLETE`, `PARTIAL` or `MISSING`; timeout results must not be interpreted as exact zero token or cost. They also expose `usageCompleteness`: `exact` for a complete provider event, `lower-bound` for observed partial usage, and `incomplete` when no trustworthy count exists. Reports count these categories separately. A disconnected provider stream is infrastructure failure; it is not converted into an agent failure or an estimated token count.
+The output directory contains identity, config, trace, usage and result artifacts. Prompt bodies and secrets are excluded. Usage artifacts use schema 2 and explicitly report `COMPLETE`, `PARTIAL` or `MISSING`; timeout results must not be interpreted as exact zero token or cost. They also expose `usageCompleteness`: `exact` for a complete provider event, `lower-bound` for observed partial usage, and `incomplete` when no trustworthy count exists. Reports count these categories separately. Evaluation report schema 2 sets `totals.costUsd` to `null` when any trial has unknown cost; `knownCostUsd`, `costKnownCount` and `costMissingCount` expose the auditable known subtotal. A configured cost budget fails closed with `cost-unknown` instead of silently treating missing cost as zero. A disconnected provider stream is infrastructure failure; it is not converted into an agent failure or an estimated token count.
+
+Harbor's token fields overlap by design: `n_input_tokens = inputTokens + cacheCreationTokens + cacheReadTokens`, `n_cache_tokens = cacheReadTokens`, and `n_output_tokens = outputTokens`. Do not add `n_cache_tokens` to `n_input_tokens` a second time. The original components and completeness flags remain in `usage.json`.
+
+`identity.json.identityEvidence` identifies whether each actual-identity field came from a provider event, configuration, an operator assertion, or is unknown. These are provenance labels, not independent gateway attestation. Unless a gateway supplies a request-ID lookup or signed billing record, Headless cannot independently prove the actual upstream provider/model and records `gatewayAttested: false`.
+
+`trace.jsonl` is the native Cindy event stream. This adapter currently declares `SUPPORTS_ATIF = False`; consumers that compare trajectories across harnesses need an ATIF converter and must not parse it as Harbor's standard `trajectory.json`.
 
 ## Harbor smoke test
 
-From `benchmarks/harbor` run the wrapper. It loads the ignored local gateway config, generates a machine-local Harbor YAML without credentials, sets `PYTHONPATH` and UTF-8 output, invokes Harbor, then collects normalized results:
-
-```powershell
-./run-smoke.ps1 -Config ./job.codex.example.yaml
-```
-
-Use a unique `run_id` and a frozen `manifest_digest` for scored runs. The adapter preserves `attempt-1` and `attempt-2`; only infrastructure errors may be retried once. Agent failures and invalid tasks are not retried.
+Run the Harbor workspace's hello-world smoke/freeze workflow from its own
+repository. Set `--workspace-root` to the Harbor workspace root; job paths must
+be relative to that root. Use a unique `run_id` and frozen `manifest_digest`.
 
 ## Collect and report results
 
+Harbor writes the raw trial artifacts under its configured jobs/evaluation
+output directory. Use the Harbor viewer or its report tooling from the Harbor
+checkout to inspect those artifacts, then pass a normalized results file to:
+
 ```powershell
-python benchmarks/harbor/collect_results.py D:/Tools/Harbor/jobs/<job> results.json
-node apps/cindy-headless/dist/cli.cjs report --manifest <manifest.json> --results results.json > report.json
+node apps/cindy-headless/dist/cli.cjs report --manifest <manifest.json> --results <results.json> > report.json
 ```
 
 Reports include per-agent and per-benchmark pass rates, paired outcomes, four-state statuses, tokens, cost, duration, provider routing, unsupported combinations and Wilson 95% intervals. A hard-30 list is publishable only after freezing at least 30 independent historical task records with `freeze-hard-30`.
+
+The adapter is intentionally maintained in Harbor, not here. To run a local
+smoke from a source checkout:
+
+```powershell
+$root = (Resolve-Path ..\harbor).Path # any Harbor checkout; do not hard-code a maintainer path
+uv run --project $root harbor eval execute <freeze-id> --workspace-root $root --approve
+```
+
+The `<freeze-id>` job must import
+`harbor.agents.installed.cindy_headless:CindyHeadlessAgent`. Harbor resolves
+the bundle and profile paths relative to `--workspace-root`, so the same job
+works after cloning to another directory. Use `harbor-compatibility.json` to
+check the required Harbor commit and adapter contract before a scored run.
+
+The `cindy-claude-parity-all-off` profile is a whole-surface parity control. Because it changes Maker Memory, project context, compaction and the Cindy system prompt together, it cannot attribute an outcome to any one dimension. Use a derived profile with exactly one declared `changedDimensions` entry for causal comparisons.
 
 ## Maintenance after Cindy updates
 
@@ -143,6 +171,8 @@ Treat Headless as a compatibility surface, not a floating checkout:
 5. Freeze the new bundle manifest and update the pinned commit/digests.
 
 Classify changes as `COMPATIBLE` (rebuild only), `REQUIRES_ADAPTER_UPDATE` (Headless or Harbor code changes), or `UNSUPPORTED` (Desktop-only capability). Do not silently enable new permissions, providers or throughput caps in a scored run.
+
+The release bundle builder refuses a dirty worktree. Commit the reviewed source on a feature branch before rebuilding; `generatedAt` is derived from that commit timestamp, while `cindyCommit` and binary/source digests bind the artifact to the reviewed revision.
 
 ### When upstream changed before a smoke test
 

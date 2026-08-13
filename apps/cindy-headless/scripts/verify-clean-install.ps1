@@ -1,7 +1,6 @@
 param(
   [string]$Repository = 'https://github.com/ganlingyao/cindy-headless-dev.git',
-  [string]$Branch = 'feat/cindy-headless-127',
-  [switch]$RunSmoke
+  [string]$Branch = 'feat/cindy-headless-127'
 )
 $ErrorActionPreference = 'Stop'
 $root = Join-Path ([System.IO.Path]::GetTempPath()) "cindy-headless-clean-$([guid]::NewGuid().ToString('N'))"
@@ -15,7 +14,6 @@ try {
     npm --prefix apps/cindy-headless test -- --run
     npm --prefix apps/cindy-headless run build
     npm --prefix apps/cindy-headless run test:distribution
-    if ($RunSmoke) { & .\benchmarks\harbor\run-smoke.ps1 -Backend codex }
   } finally { Pop-Location }
   Write-Host 'PASS clean clone verification'
 } finally {

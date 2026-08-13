@@ -113,6 +113,11 @@ export function profileDigest(profile: HeadlessProfile): string {
 export async function readProfile(profilePath: string): Promise<ResolvedProfile> {
   const absolutePath = path.resolve(profilePath);
   const profile = validateProfile(JSON.parse(await readFile(absolutePath, 'utf8')));
+  // Profiles may travel with a release or checkout. Resolve relative binaries
+  // beside the profile instead of depending on the caller's current directory.
+  if (!path.isAbsolute(profile.agentBinaryPath)) {
+    profile.agentBinaryPath = path.resolve(path.dirname(absolutePath), profile.agentBinaryPath);
+  }
   const endpointOverride = profile.agentBackend === 'claude-code'
     ? process.env.CINDY_HEADLESS_BASE_URL ?? process.env.ANTHROPIC_BASE_URL
     : undefined;

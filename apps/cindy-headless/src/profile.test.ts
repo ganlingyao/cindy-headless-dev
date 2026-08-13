@@ -40,4 +40,11 @@ describe('headless profile', () => {
     await writeFile(path.join(dir, 'profile.json'), JSON.stringify({ ...profile, systemPromptFile: 'prompt.md', expectedSystemPromptDigest: '0'.repeat(64) }));
     await expect(readProfile(path.join(dir, 'profile.json'))).rejects.toThrow(/digest/);
   });
+  it('resolves a bundled binary relative to the profile file', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'headless-profile-relative-'));
+    await writeFile(path.join(dir, 'bin'), 'binary');
+    await writeFile(path.join(dir, 'profile.json'), JSON.stringify({ ...profile, agentBinaryPath: 'bin' }));
+    const resolved = await readProfile(path.join(dir, 'profile.json'));
+    expect(resolved.profile.agentBinaryPath).toBe(path.join(dir, 'bin'));
+  });
 });

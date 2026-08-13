@@ -14,6 +14,9 @@ describe('Headless result classification', () => {
     expect(classifyFailure('Claude Code native binary not found at /opt/cindy-headless/bin/claude', undefined, false)).toBe('infra-agent-setup');
     expect(classifyFailure("Input tag 'document' does not match expected tags", undefined, false)).toBe('infra-invalid-request');
     expect(classifyFailure('Connection closed mid-response', undefined, false)).toBe('infra-invalid-provider');
+    expect(classifyFailure('sdk_stream_crashed: upstream ended', undefined, false)).toBe('infra-invalid-provider');
+    expect(classifyFailure('HTTP 502 from gateway', undefined, false)).toBe('infra-invalid-provider');
+    expect(classifyFailure('killed by signal SIGKILL', undefined, false)).toBe('infra-invalid-provider');
     expect(classifyFailure('HEADLESS_TERMINATED_SIGTERM', undefined, false)).toBe('infra-terminated-signal');
   });
 

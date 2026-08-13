@@ -268,7 +268,7 @@ Headless 构造代码应使用完整类型约束，`maker-core` 新增必需依�
 
 ### 6.3 Harbor Agent adapter
 
-建议位置：`benchmarks/harbor/agents/cindy_headless.py`。
+正式位置：Harbor 仓库的 `src/harbor/agents/installed/cindy_headless.py`；Headless 仓库不再维护第二套 adapter。
 
 它实现 Harbor `BaseAgent`/`BaseInstalledAgent` 契约：
 
@@ -740,4 +740,4 @@ hard-30 的来源、公开 historical solve-rate 数据 revision、筛选脚本�
 
 ## 17. 仓库布局决定
 
-正式实现放在 Cindy monorepo：`apps/cindy-headless` 直接复用 `@cindy/maker-core`，`benchmarks/harbor` 保存 adapter/profile/计划契约，本文档保存在 `docs`。开发时可以在 `D:\Work` 使用独立 clone/worktree 隔离分支，但不维护第二套独立产品仓库。这样 Desktop 与 Headless 才能共享 Agent loop、版本 pin 和类型检查，并建立 prompt/runtime digest parity gate。
+正式实现分工为：Headless monorepo 的 `apps/cindy-headless` 提供 runtime/profile/bundle；Harbor 仓库的 `src/harbor/agents/installed/cindy_headless.py` 提供唯一 adapter。不要在 Headless 仓库维护 standalone adapter，避免两套实现漂移。
