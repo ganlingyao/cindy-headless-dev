@@ -204,7 +204,7 @@ The Kimi gateway examples are
 local config file, never by editing these tracked profiles.
 
 For the DeepSeek smoke campaign, use
-`profiles/cindy-production-claude/profile.deepseek-v4-flash.example.json`.
+  `profiles/cindy-production-claude/profile.deepseek-v4-flash.example.json`.
 It pins `deepseek/deepseek-v4-flash` and a 1,048,576-token declared context
 window. The gateway must actually advertise/support this model; the profile
 does not turn a gateway route into an independent model attestation.
