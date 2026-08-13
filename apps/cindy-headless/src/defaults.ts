@@ -1,0 +1,1 @@
+export const DEFAULT_HEADLESS_TIMEOUT_MS = 1_800_000;
