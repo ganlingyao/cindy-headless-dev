@@ -74,7 +74,8 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workin
     initialEnabled: profile.makerMemory,
     reviewAgent: profile.agentBackend,
   });
-  const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, userDataPath: stateDir, memoryEnabled: profile.nativeMemory, makerMemoryEnabled: profile.makerMemory, behaviorFlags: profile.containerSandbox ? { IS_SANDBOX: '1' } : undefined, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
+  const behaviorFlags = { ...(profile.containerSandbox ? { IS_SANDBOX: '1' } : {}), ...(profile.model.maxOutputTokens ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(profile.model.maxOutputTokens) } : {}) };
+  const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, userDataPath: stateDir, memoryEnabled: profile.nativeMemory, makerMemoryEnabled: profile.makerMemory, behaviorFlags: Object.keys(behaviorFlags).length > 0 ? behaviorFlags : undefined, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
   const memoryProvider = createMemoryMcpProvider({ getManager: () => makerMemory, logger: logger.child('cindy-memory-mcp') });
   const memoryProviders = profile.makerMemory ? [memoryProvider] : [];
   const capabilityAdditions = modelCapabilityAdditions(profile);
@@ -256,7 +257,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
     await mkdir(stateDir, { recursive: true });
     if (profile.agentBackend === 'claude-code') await access(profile.agentBinaryPath);
     runtime = createHeadlessMaker(resolved, stateDir, absoluteWorkingDir);
-    session = await runtime.maker.createSession({ agentKind: profile.agentBackend, workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
+    session = await runtime.maker.createSession({ agentKind: profile.agentBackend, workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, effort: profile.model.effort, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
     let resolveTerminal: (() => void) | undefined;
     let terminal = Promise.resolve();
     session.onEvent((event) => { events.push(event); if (event.type === 'error' && isTerminalTurnEvent(event)) terminalError = event; if (isTerminalTurnEvent(event)) resolveTerminal?.(); });

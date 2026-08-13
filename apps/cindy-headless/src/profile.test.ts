@@ -40,6 +40,11 @@ describe('headless profile', () => {
     await writeFile(path.join(dir, 'profile.json'), JSON.stringify({ ...profile, systemPromptFile: 'prompt.md', expectedSystemPromptDigest: '0'.repeat(64) }));
     await expect(readProfile(path.join(dir, 'profile.json'))).rejects.toThrow(/digest/);
   });
+  it('validates explicit effort and output limits', () => {
+    expect(validateProfile({ ...profile, model: { ...profile.model, effort: 'xhigh', maxOutputTokens: 32000 } }).model.effort).toBe('xhigh');
+    expect(() => validateProfile({ ...profile, model: { ...profile.model, effort: 'unknown' as never } })).toThrow(/effort/);
+    expect(() => validateProfile({ ...profile, model: { ...profile.model, maxOutputTokens: 0 } })).toThrow(/maxOutputTokens/);
+  });
   it('resolves a bundled binary relative to the profile file', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'headless-profile-relative-'));
     await writeFile(path.join(dir, 'bin'), 'binary');

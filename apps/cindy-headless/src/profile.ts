@@ -22,6 +22,8 @@ export interface HeadlessProfile {
     routeId?: string;
     contextLimit?: number;
     thinkingBudget?: number | string;
+    effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    maxOutputTokens?: number;
   };
   endpoint?: string;
   permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default' | 'ask' | 'auto' | 'plan';
@@ -80,6 +82,8 @@ export function validateProfile(profile: unknown): HeadlessProfile {
   nonEmptyString(value.model.provider, 'model.provider');
   nonEmptyString(value.model.requestedId, 'model.requestedId');
   if (!value.supportedModelIds.includes(value.model.requestedId)) throw new Error(`model ${value.model.requestedId} is not supported by this profile`);
+  if (value.model.effort !== undefined && !['low', 'medium', 'high', 'xhigh', 'max'].includes(value.model.effort)) throw new Error('model.effort must be low, medium, high, xhigh or max');
+  if (value.model.maxOutputTokens !== undefined && (!Number.isInteger(value.model.maxOutputTokens) || value.model.maxOutputTokens <= 0)) throw new Error('model.maxOutputTokens must be a positive integer');
   if (!['bypassPermissions', 'acceptEdits', 'default', 'ask', 'auto', 'plan'].includes(value.permissionMode ?? '')) throw new Error('unsupported permissionMode');
   if (value.agentBackend === 'claude-code' && value.permissionMode === 'auto') throw new Error('auto permissionMode is only supported by codex');
   if (value.agentBackend === 'codex' && (value.permissionMode === 'acceptEdits' || value.permissionMode === 'default')) throw new Error(`${value.permissionMode} permissionMode is not supported by codex`);
