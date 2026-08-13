@@ -11,10 +11,11 @@ const bundleDir = path.join(appDir, 'bundle', 'linux-x64');
 const manifest = JSON.parse(await readFile(path.join(bundleDir, 'bundle-manifest.json'), 'utf8'));
 if (manifest.schemaVersion !== 4 || manifest.headlessContractVersion !== 1) throw new Error('unsupported bundle manifest schema or contract');
 if (manifest.agentBackend !== 'claude-code' && manifest.agentBackend !== 'codex') throw new Error('bundle manifest must declare agentBackend');
-for (const [name, expected] of [['node', manifest.nodeBinaryDigest], ['claude', manifest.claudeBinaryDigest], ['codex', manifest.codexBinaryDigest]]) {
-  const bytes = await readFile(path.join(bundleDir, 'bin', name));
+for (const [relativePath, expected] of [['dist/cli.cjs', manifest.cliDigest], ['bin/node', manifest.nodeBinaryDigest], ['bin/claude', manifest.claudeBinaryDigest], ['bin/codex', manifest.codexBinaryDigest]]) {
+  if (typeof expected !== 'string' || !/^[a-f0-9]{64}$/.test(expected)) throw new Error(`missing or invalid digest for ${relativePath}`);
+  const bytes = await readFile(path.join(bundleDir, relativePath));
   const actual = createHash('sha256').update(bytes).digest('hex');
-  if (actual !== expected) throw new Error(`${name} binary digest mismatch`);
+  if (actual !== expected) throw new Error(`${relativePath} digest mismatch`);
 }
 const run = async (command, args) => execFileAsync(command, args, { cwd: bundleDir, timeout: 30_000 });
 const runBundleBinary = async (name, args) => {

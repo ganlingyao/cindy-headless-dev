@@ -83,12 +83,13 @@ const codexPrompt = [desktopHost, desktopCodex].map((part) => part.trim()).filte
 await writeFile(path.join(outputDir, 'prompt.md'), productionPrompt, 'utf8');
 await writeFile(path.join(outputDir, 'codex-prompt.md'), codexPrompt, 'utf8');
 const packageJson = JSON.parse(await readFile(path.join(appDir, 'package.json'), 'utf8'));
-const [{ stdout: commit }, { stdout: commitDate }, lockfile, binaryBytes, codexBinaryBytes, nodeBinaryBytes] = await Promise.all([
+const [{ stdout: commit }, { stdout: commitDate }, lockfile, cliBytes, binaryBytes, codexBinaryBytes, nodeBinaryBytes] = await Promise.all([
   execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }),
   execFileAsync('git', ['show', '-s', '--format=%cI', 'HEAD'], { cwd: repoRoot }),
   readFile(path.join(repoRoot, 'pnpm-lock.yaml')),
+  readFile(path.join(outputDir, 'dist', 'cli.cjs')),
   readFile(binary),
   readFile(codexBinary),
   readFile(nodeBinary),
 ]);
-await writeFile(path.join(outputDir, 'bundle-manifest.json'), JSON.stringify({ schemaVersion: 4, headlessContractVersion: 1, agentBackend, cindyHeadlessVersion: packageJson.version, cindyCommit: commit.trim(), lockfileDigest: sha256(lockfile), systemPromptDigest: sha256(productionPrompt), codexSystemPromptDigest: sha256(codexPrompt), nodeBinaryDigest: sha256(nodeBinaryBytes), nodeVersion: nodeMetadata.version, claudeBinaryDigest: sha256(binaryBytes), codexBinaryDigest: sha256(codexBinaryBytes), claudeCodeVersion: latest.version, codexVersion: codexLatest.version, observedClaudeVersion, observedCodexVersion, platform: 'linux-x64', generatedAt: commitDate.trim() }, null, 2) + '\n');
+await writeFile(path.join(outputDir, 'bundle-manifest.json'), JSON.stringify({ schemaVersion: 4, headlessContractVersion: 1, agentBackend, cindyHeadlessVersion: packageJson.version, cindyCommit: commit.trim(), lockfileDigest: sha256(lockfile), cliDigest: sha256(cliBytes), systemPromptDigest: sha256(productionPrompt), codexSystemPromptDigest: sha256(codexPrompt), nodeBinaryDigest: sha256(nodeBinaryBytes), nodeVersion: nodeMetadata.version, claudeBinaryDigest: sha256(binaryBytes), codexBinaryDigest: sha256(codexBinaryBytes), claudeCodeVersion: latest.version, codexVersion: codexLatest.version, observedClaudeVersion, observedCodexVersion, platform: 'linux-x64', generatedAt: commitDate.trim() }, null, 2) + '\n');
