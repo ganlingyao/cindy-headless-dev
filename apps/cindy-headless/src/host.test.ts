@@ -10,6 +10,9 @@ describe('Headless result classification', () => {
     expect(classifyFailure('HEADLESS_DEADLINE_EXCEEDED', undefined, true)).toBe('valid-deadline-killed');
     expect(classifyFailure('401 unauthorized', undefined, false)).toBe('infra-invalid-auth');
     expect(classifyFailure('stream disconnected before completion', undefined, false)).toBe('infra-invalid-provider');
+    expect(classifyFailure('Claude Code native binary not found at /opt/cindy-headless/bin/claude', undefined, false)).toBe('infra-agent-setup');
+    expect(classifyFailure("Input tag 'document' does not match expected tags", undefined, false)).toBe('infra-invalid-request');
+    expect(classifyFailure('Connection closed mid-response', undefined, false)).toBe('infra-invalid-provider');
     expect(classifyFailure('HEADLESS_TERMINATED_SIGTERM', undefined, false)).toBe('infra-terminated-signal');
   });
 

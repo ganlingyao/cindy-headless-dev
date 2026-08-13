@@ -35,7 +35,7 @@ async function main(): Promise<void> {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('--timeout-ms must be a positive number');
     const result = await runTask(await readProfile(requireFlag('--profile')), task, flag('--working-dir') ?? process.cwd(), flag('--output-dir') ?? './results', timeoutMs, turns);
     console.log(JSON.stringify(result, null, 2));
-    if (String(result.status ?? '').startsWith('infra-invalid-')) process.exitCode = 1;
+    if (String(result.status ?? '').startsWith('infra-')) process.exitCode = 1;
     return;
   }
   if (command === 'plan') {

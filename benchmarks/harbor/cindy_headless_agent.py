@@ -89,9 +89,9 @@ class CindyHeadlessAgent(BaseAgent):
             elif not runtime_env.get("CINDY_HEADLESS_API_KEY"):
                 raise ValueError("codex profiles require codex_home_dir or CINDY_HEADLESS_API_KEY")
         result = await environment.exec(
-            f"set -e; mkdir -p /logs/agent; chmod +x /opt/cindy-headless/bin/node /opt/cindy-headless/bin/{binary}; "
+            f"set -e; mkdir -p /logs/agent /app; chmod +x /opt/cindy-headless/bin/node /opt/cindy-headless/bin/{binary}; "
             "/opt/cindy-headless/bin/node /opt/cindy-headless/dist/cli.cjs doctor "
-            f"--profile {container_profile} --output-dir /logs/agent",
+            f"--profile {container_profile} --working-dir /app --output-dir /logs/agent",
             env=runtime_env,
             timeout_sec=60,
         )
@@ -105,11 +105,16 @@ class CindyHeadlessAgent(BaseAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        requested = self.model_name.split("/", 1)[-1] if self.model_name else None
+        requested = self.model_name
         profile = json.loads(self.profile_path.read_text(encoding="utf-8"))
         profile_id = profile.get("id", profile.get("agentBackend", "cindy-headless"))
         configured = profile.get("model", {}).get("requestedId")
-        if requested and requested != configured:
+        model_matches = bool(requested and configured and (
+            requested == configured
+            or requested.rsplit("/", 1)[-1] == configured
+            or configured.rsplit("/", 1)[-1] == requested
+        ))
+        if requested and not model_matches:
             raise ValueError(
                 f"Harbor model {requested!r} does not match profile model {configured!r}"
             )
@@ -141,7 +146,7 @@ class CindyHeadlessAgent(BaseAgent):
             if attempt > 1:
                 env["CINDY_REPLACES_ATTEMPT_ID"] = f"{attempt_prefix}-attempt-1"
             result = await environment.exec(
-                "mkdir -p " + attempt_dir + "; /opt/cindy-headless/bin/node /opt/cindy-headless/dist/cli.cjs run "
+                "mkdir -p /app " + attempt_dir + "; /opt/cindy-headless/bin/node /opt/cindy-headless/dist/cli.cjs run "
                 f"--profile {container_profile} --working-dir /app --output-dir {attempt_dir} --timeout-ms {int(self.headless_timeout_sec * 1000)}",
                 env=env,
                 timeout_sec=self.headless_timeout_sec + self.headless_grace_sec,

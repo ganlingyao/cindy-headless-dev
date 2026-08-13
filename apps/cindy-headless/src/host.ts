@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createMemoryMcpProvider } from './memory-provider.js';
@@ -63,11 +63,22 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workin
   const runtimeConfig: AgentRuntimeConfig = { endpoint: profile.endpoint, systemPrompt: resolved.systemPrompt, userDataPath: stateDir, memoryEnabled: profile.nativeMemory, makerMemoryEnabled: profile.makerMemory, behaviorFlags: profile.containerSandbox ? { IS_SANDBOX: '1' } : undefined, autoCompactThresholdPct: profile.compaction?.enabled ? profile.compaction.thresholdPct : undefined };
   const memoryProvider = createMemoryMcpProvider({ getManager: () => makerMemory, logger: logger.child('cindy-memory-mcp') });
   const memoryProviders = profile.makerMemory ? [memoryProvider] : [];
+  const capabilityAdditions = profile.model.contextLimit
+    ? {
+        availableModels: [{
+          id: profile.model.requestedId,
+          displayName: profile.model.requestedId,
+          contextWindow: profile.model.contextLimit,
+          efforts: [],
+          defaultEffort: null,
+        }],
+      }
+    : undefined;
   let bridge: CodexMemoryBridge | undefined;
   let bridgePromise: Promise<CodexMemoryBridge> | undefined;
   let agent: BaseAgent;
   if (profile.agentBackend === 'claude-code') {
-    agent = new ClaudeCodeAgent({ auth: claudeAuth(), runtimeConfig, binaryPath: profile.agentBinaryPath, logger, mcpProviders: memoryProviders, makerMemory });
+    agent = new ClaudeCodeAgent({ auth: claudeAuth(), runtimeConfig, binaryPath: profile.agentBinaryPath, logger, mcpProviders: memoryProviders, makerMemory, capabilityAdditions });
   } else {
     agent = new CodexAgent({
       auth: codexAuth(stateDir),
@@ -76,6 +87,7 @@ function createHeadlessMaker(resolved: ResolvedProfile, stateDir: string, workin
       logger,
       mcpProviders: memoryProviders,
       makerMemory,
+      capabilityAdditions,
       prepareCodexExtraSpawnConfig: async () => {
         let extraArgs = process.env.CINDY_CODEX_API_KEY && process.env.CINDY_HEADLESS_BASE_URL
           ? buildCodexGatewayArgs({ baseUrl: process.env.CINDY_HEADLESS_BASE_URL, apiKey: process.env.CINDY_CODEX_API_KEY })
@@ -110,9 +122,11 @@ export function classifyFailure(error: string | undefined, terminalError: AgentE
   if (error?.startsWith('HEADLESS_TERMINATED_')) return 'infra-terminated-signal';
   if (!error && !terminalError) return 'valid-completed';
   const text = `${error ?? ''} ${terminalError ? JSON.stringify(terminalError.data) : ''}`.toLowerCase();
+  if (/native binary not found|executable.*not found|enoent|no such file or directory/.test(text)) return 'infra-agent-setup';
+  if (/invalid_request_error|input tag .* does not match|unsupported content|bad request|\b400\b/.test(text)) return 'infra-invalid-request';
   if (/auth|api.?key|unauthorized|401/.test(text)) return 'infra-invalid-auth';
   if (/model.*(not found|unsupported)|route|requested.*effective/.test(text)) return 'infra-invalid-route';
-  if (/rate.?limit|overload|provider|network|econn|timeout|stream disconnected|broken pipe|connection reset|connection aborted|socket hang up/.test(text)) return 'infra-invalid-provider';
+  if (/rate.?limit|overload|provider|network|econn|timeout|stream disconnected|broken pipe|connection reset|connection aborted|socket hang up|connection closed mid-response/.test(text)) return 'infra-invalid-provider';
   return 'valid-agent-error';
 }
 
@@ -219,7 +233,6 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   let deadlineKilled = false;
   let terminationSignal: NodeJS.Signals | undefined;
   let terminalError: AgentEvent | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let rejectTermination!: (cause: Error) => void;
   const termination = new Promise<void>((_, reject) => { rejectTermination = reject; });
   const terminate = (signal: NodeJS.Signals) => {
@@ -236,6 +249,7 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const stateDir = path.resolve(process.env.CINDY_HEADLESS_STATE_DIR ?? path.join(absoluteOutputDir, 'state'));
   try {
     await mkdir(stateDir, { recursive: true });
+    if (profile.agentBackend === 'claude-code') await access(profile.agentBinaryPath);
     runtime = createHeadlessMaker(resolved, stateDir, absoluteWorkingDir);
     session = await runtime.maker.createSession({ agentKind: profile.agentBackend, workingDir: absoluteWorkingDir, model: profile.model.requestedId, providerId: profile.model.provider, permissionMode: profile.permissionMode, makerMemoryEnabled: profile.makerMemory, userPrompt: projectContext.content, vendorOptions: { onStderrLine: (line: string) => { void appendFile(path.join(absoluteOutputDir, 'stderr.log'), `${line}\n`, 'utf8'); } }, id: `headless-${Date.now()}` });
     let resolveTerminal: (() => void) | undefined;
@@ -244,21 +258,30 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
     for (const turn of turns.length > 0 ? turns : [task]) {
       terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
       await session.send(turn);
-      await Promise.race([terminal, termination, new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error('HEADLESS_DEADLINE_EXCEEDED')), timeoutMs); })]);
-      if (timer) { clearTimeout(timer); timer = undefined; }
+      // Harbor owns the agent deadline. Keep the SDK session alive until Harbor
+      // terminates the process instead of racing a second local watchdog.
+      await Promise.race([terminal, termination]);
     }
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
     deadlineKilled = error === 'HEADLESS_DEADLINE_EXCEEDED';
-    if ((deadlineKilled || terminationSignal) && session) await session.abort().catch(() => undefined);
+    if ((deadlineKilled || terminationSignal) && session) {
+      await session.abort().catch(() => undefined);
+      // If the deadline fired, the agent binary may be stuck in a streaming
+      // HTTP request that never checks abort signals. Force-kill the maker
+      // process immediately so resources are freed without waiting.
+      try { await runtime?.maker.shutdown(); } catch { /* best-effort force kill */ }
+    }
   } finally {
-    if (timer) clearTimeout(timer);
     process.off('SIGTERM', onSigterm);
     process.off('SIGINT', onSigint);
   }
   // Claude may emit the final `done` event while closing the SDK session. Flush
   // it before extracting provider usage so Harbor receives real token counts.
-  try { await session?.close(); } catch { /* artifact writing must still run */ }
+  // When the deadline fired and the maker was killed, close may hang forever.
+  // Race it against a 5-second hard deadline so artifact writing never blocks.
+  const CLOSE_DEADLINE_MS = 5_000;
+  try { await Promise.race([session?.close(), new Promise((_, reject) => setTimeout(() => reject(new Error('CLOSE_TIMEOUT')), CLOSE_DEADLINE_MS))]); } catch { /* artifact writing must still run */ }
   const usage = session?.getUsageSnapshot() ?? { tokenUsage: 0, contextTokens: 0, contextWindow: 0, costUsd: 0 };
   const providerUsage = extractProviderUsage(events, profile.agentBackend);
   if (providerUsage.normalizedUsage.costUsd === 0 && usage.costUsd > 0) providerUsage.normalizedUsage.costUsd = usage.costUsd;
@@ -268,7 +291,10 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const usageCompleteness = usageStatus === 'COMPLETE' ? 'exact' : usageStatus === 'PARTIAL' ? 'lower-bound' : 'incomplete';
   const usageSource = [providerUsage.rawProviderUsage ? 'provider-events' : '', usage.tokenUsage > 0 ? 'session-snapshot' : ''].filter(Boolean);
   const missingFields = usageStatus === 'COMPLETE' ? [] : ['inputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'outputTokens', 'costUsd'].filter((field) => providerUsage.normalizedUsage[field as keyof typeof providerUsage.normalizedUsage] === 0);
-  const status = classifyFailure(error, terminalError, deadlineKilled);
+  const terminalMessage = terminalError?.data && typeof terminalError.data === 'object' && typeof (terminalError.data as Record<string, unknown>).message === 'string'
+    ? String((terminalError.data as Record<string, unknown>).message) : undefined;
+  const effectiveError = error ?? terminalMessage;
+  const status = classifyFailure(effectiveError, terminalError, deadlineKilled);
   const reward = typeof process.env.CINDY_HEADLESS_REWARD === 'string' ? Number(process.env.CINDY_HEADLESS_REWARD) : null;
   const benchmark = process.env.CINDY_BENCHMARK ?? null;
   const taskId = process.env.CINDY_TASK_ID ?? null;
@@ -280,9 +306,13 @@ async function runTaskWithIsolatedEnvironment(resolved: ResolvedProfile, task: s
   const standard = standardResult(status, reward);
   const actualEndpoint = profile.agentBackend === 'codex'
     ? process.env.CINDY_CODEX_BASE_URL ?? process.env.CINDY_HEADLESS_BASE_URL ?? null
-    : profile.endpoint ?? null;
-  const identity = { schemaVersion: 2, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, cindyCliVersion: CINDY_HEADLESS_VERSION, harborVersion: process.env.HARBOR_VERSION ?? null, litellmVersion: process.env.LITELLM_VERSION ?? null, requestedModelId: profile.model.requestedId, actualModelId: process.env.CINDY_ACTUAL_MODEL ?? profile.model.requestedId, provider: profile.model.provider, actualEndpoint, upstreamProvider: process.env.CINDY_UPSTREAM_PROVIDER ?? profile.model.provider, routeId: profile.model.routeId ?? null, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
-  const result = { schemaVersion: 2, status, resultClass: standard, reward, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, sessionId: session?.id ?? null, turnsCount: turns.length > 0 ? turns.length : 1, durationMs: Date.now() - startedAt, error: error ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length, retries: Number(process.env.CINDY_RETRY_COUNT ?? '0') || 0, replacesAttemptId: process.env.CINDY_REPLACES_ATTEMPT_ID ?? null };
+    : process.env.CINDY_HEADLESS_BASE_URL ?? profile.endpoint ?? null;
+  const observedModels = [...new Set(events.map((event) => event.agentMeta?.model).filter((model): model is string => typeof model === 'string' && model !== '<synthetic>'))];
+  const actualModelId = process.env.CINDY_ACTUAL_MODEL ?? (observedModels.length === 1 ? observedModels[0] : null);
+  const upstreamProvider = process.env.CINDY_UPSTREAM_PROVIDER ?? null;
+  const requestIds = [...new Set(events.map((event) => event.agentMeta?.requestId).filter((id): id is string => typeof id === 'string'))];
+  const identity = { schemaVersion: 2, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, profileId: profile.id, profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest, agentBackend: profile.agentBackend, agentBinaryVersion: profile.agentBinaryVersion, cindyCliVersion: CINDY_HEADLESS_VERSION, harborVersion: process.env.HARBOR_VERSION ?? null, litellmVersion: process.env.LITELLM_VERSION ?? null, requestedModelId: profile.model.requestedId, actualModelId, provider: profile.model.provider, actualEndpoint, upstreamProvider, routeId: profile.model.routeId ?? null, observedModels, requestIds, containerSandbox: profile.containerSandbox ?? false, projectContext: profile.projectContext, projectContextInjected: projectContext.injected, projectContextDigest: projectContext.digest, makerMemory: profile.makerMemory, nativeMemory: profile.nativeMemory };
+  const result = { schemaVersion: 2, status, resultClass: standard, reward, runId, cellId, attemptId, manifestDigest, benchmark, benchmarkRevision: process.env.CINDY_BENCHMARK_REVISION ?? null, taskId, repetition, sessionId: session?.id ?? null, turnsCount: turns.length > 0 ? turns.length : 1, durationMs: Date.now() - startedAt, error: effectiveError ?? null, terminalError: terminalError?.data ?? null, eventsCount: events.length, retries: Number(process.env.CINDY_RETRY_COUNT ?? '0') || 0, replacesAttemptId: process.env.CINDY_REPLACES_ATTEMPT_ID ?? null };
   try { await runtime?.maker.shutdown(); } catch { /* best effort cleanup */ }
   try { await runtime?.shutdownBridge(); } catch { /* best effort cleanup */ }
   try { runtime?.sessionStorage.close(); } catch { /* best effort cleanup */ }
