@@ -18,7 +18,8 @@ await command('docker');
 await command(process.env.HARBOR_BIN ?? 'harbor');
 try {
   const manifest = JSON.parse(await readFile(path.join(appDir, 'bundle', 'linux-x64', 'bundle-manifest.json'), 'utf8'));
-  checks.push({ name: 'bundle', ok: manifest.schemaVersion === 4 && manifest.headlessContractVersion === 1 && ['claude-code', 'codex'].includes(manifest.agentBackend) && Boolean(manifest.cliDigest && manifest.nodeBinaryDigest && manifest.nodeVersion), detail: manifest.cindyCommit });
+  const harnesses = manifest.capabilityCatalog?.harnesses?.map((item) => item.backend) ?? [];
+  checks.push({ name: 'bundle', ok: manifest.schemaVersion === 5 && manifest.headlessContractVersion === 1 && ['claude-code', 'codex', 'pi'].every((backend) => harnesses.includes(backend)) && /^[0-9a-f]{40}$/.test(manifest.cindyUpstreamCommit ?? '') && Boolean(manifest.cliDigest && manifest.evalCliDigest && manifest.profilesDigest && manifest.nodeBinaryDigest && manifest.nodeVersion && manifest.piRuntimeDigest), detail: `${manifest.cindyHeadlessVersion ?? 'unknown'} / ${manifest.cindyUpstreamCommit ?? 'unknown'}` });
 } catch { checks.push({ name: 'bundle', ok: false, detail: 'missing or invalid manifest' }); }
 const configCandidates = [path.join(appDir, 'config.local.json'), process.env.CINDY_HEADLESS_CONFIG_FILE].filter(Boolean);
 let configured = Boolean(process.env.CINDY_HEADLESS_API_KEY && process.env.CINDY_HEADLESS_BASE_URL);

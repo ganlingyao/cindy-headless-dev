@@ -1,6 +1,7 @@
 {
   "name": "cindy-headless",
-  "version": "0.1.9",
+  "version": "0.3.1",
+  "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2",
   "private": true,
   "type": "module",
   "bin": {
@@ -10,13 +11,14 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "ensure:binaries": "node scripts/ensure-agent-binaries.mjs",
-    "bundle:linux": "node scripts/build-linux-bundle.mjs",
+    "bundle:linux": "pnpm ensure:binaries && node scripts/build-linux-bundle.mjs",
     "package:runtime": "node scripts/package-release.mjs",
     "package:full": "node scripts/package-release.mjs --allow-vendor-binaries",
     "verify:distribution:full": "node scripts/verify-full-distribution.mjs",
     "test:distribution": "node scripts/verify-distribution.mjs",
     "doctor:distribution": "node scripts/distribution-doctor.mjs",
     "verify:bundle": "node scripts/verify-bundle.mjs",
+    "profiles:freeze": "node scripts/freeze-production-profiles.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "verify": "pnpm typecheck && pnpm test && pnpm build"

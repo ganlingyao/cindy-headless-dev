@@ -17,8 +17,25 @@ async function digest(file) {
   return hash.digest('hex');
 }
 
+async function digestTree(directory) {
+  const hash = createHash('sha256');
+  async function walk(current, prefix = '') {
+    const entries = await readdir(current, { withFileTypes: true });
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await walk(path.join(current, entry.name), relative);
+      else if (entry.isFile()) { hash.update(relative); hash.update('\0'); hash.update(await readFile(path.join(current, entry.name))); hash.update('\0'); }
+      else throw new Error(`unsupported Pi runtime entry: ${relative}`);
+    }
+  }
+  await walk(directory);
+  return hash.digest('hex');
+}
+
 const release = JSON.parse(await readFile(path.join(releaseDir, 'release-manifest.json'), 'utf8'));
 assert.equal(release.product, 'cindy-headless');
+assert.match(release.cindyUpstreamCommit, /^[0-9a-f]{40}$/);
 assert.equal(release.includesVendorBinaries, true, 'release manifest must identify the vendor binaries');
 const fullAsset = release.assets.find((asset) => /-full-/.test(asset));
 assert.ok(fullAsset, 'release manifest does not list a full package');
@@ -38,11 +55,17 @@ try {
   await execFileAsync('tar', ['-xzf', fullAsset, '-C', path.basename(temporary)], { cwd: releaseDir });
   const root = path.join(temporary, 'cindy-headless');
   const bundle = JSON.parse(await readFile(path.join(root, 'bundle-manifest.json'), 'utf8'));
+  assert.equal(await digest(path.join(root, 'dist', 'cli.cjs')), bundle.cliDigest, 'CLI digest mismatch');
+  assert.equal(await digest(path.join(root, 'dist', 'eval-cli.cjs')), bundle.evalCliDigest, 'Eval CLI digest mismatch');
   assert.equal(await digest(path.join(root, 'bin', 'node')), bundle.nodeBinaryDigest, 'Node binary digest mismatch');
   assert.equal(await digest(path.join(root, 'bin', 'claude')), bundle.claudeBinaryDigest, 'Claude binary digest mismatch');
   assert.equal(await digest(path.join(root, 'bin', 'codex')), bundle.codexBinaryDigest, 'Codex binary digest mismatch');
+  assert.equal(await digest(path.join(root, 'bin', 'pi', 'pi')), bundle.piBinaryDigest, 'Pi binary digest mismatch');
+  assert.equal(await digestTree(path.join(root, 'bin', 'pi')), bundle.piRuntimeDigest, 'Pi runtime digest mismatch');
+  assert.equal(await digestTree(path.join(root, 'profiles')), bundle.profilesDigest, 'profiles digest mismatch');
   assert.ok((await stat(path.join(root, 'bin', 'claude'))).size > 0);
   assert.ok((await stat(path.join(root, 'bin', 'codex'))).size > 0);
+  assert.ok((await stat(path.join(root, 'bin', 'pi', 'pi'))).size > 0);
   assert.ok((await stat(path.join(root, 'bin', 'node'))).size > 0);
   await readFile(path.join(root, 'VENDOR-BINARIES-NOTICE.txt'));
   await readFile(path.join(root, 'prepare-binaries.sh'));
@@ -55,6 +78,8 @@ try {
   const version = JSON.parse(stdout);
   assert.equal(version.name, 'cindy-headless');
   assert.equal(version.version, release.version);
+  assert.equal(version.cindyUpstreamCommit, release.cindyUpstreamCommit);
+  assert.equal(bundle.cindyUpstreamCommit, release.cindyUpstreamCommit);
   async function runBinary(name, args) {
     if (process.platform !== 'win32') return execFileAsync(path.join(root, 'bin', name), args, { timeout: 30_000 });
     const { stdout: linuxRoot } = await execFileAsync('wsl.exe', ['-e', 'wslpath', '-a', root], { timeout: 30_000 });
@@ -63,8 +88,10 @@ try {
   const nodeVersion = await runBinary('node', ['--version']);
   const claudeVersion = await runBinary('claude', ['--version']);
   const codexVersion = await runBinary('codex', ['--version']);
+  const piVersion = await runBinary('pi/pi', ['--version']);
   assert.match(`${claudeVersion.stdout} ${claudeVersion.stderr}`, new RegExp(bundle.claudeCodeVersion.replaceAll('.', '\\.')));
   assert.match(`${codexVersion.stdout} ${codexVersion.stderr}`, new RegExp(bundle.codexVersion.replaceAll('.', '\\.')));
+  assert.match(`${piVersion.stdout} ${piVersion.stderr}`, new RegExp(bundle.piVersion.replaceAll('.', '\\.')));
   assert.match(`${nodeVersion.stdout} ${nodeVersion.stderr}`, new RegExp(bundle.nodeVersion.replaceAll('.', '\\.')));
   await runBinary('codex', ['app-server', '--help']);
 
@@ -79,7 +106,7 @@ try {
     }
   }
   await scan(root);
-  console.log(JSON.stringify({ ok: true, version: release.version, asset: fullAsset, claudeCodeVersion: bundle.claudeCodeVersion, codexVersion: bundle.codexVersion }));
+  console.log(JSON.stringify({ ok: true, version: release.version, asset: fullAsset, claudeCodeVersion: bundle.claudeCodeVersion, codexVersion: bundle.codexVersion, piVersion: bundle.piVersion }));
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

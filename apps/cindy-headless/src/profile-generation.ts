@@ -1,0 +1,124 @@
+import path from 'node:path';
+import type { HeadlessCapabilityCatalog, HeadlessHarnessCapability } from './compatibility.js';
+import { ADAPTER_HARNESSES, discoverCapabilityCatalog } from './compatibility.js';
+import type { HeadlessProfile } from './profile.js';
+import { validateProfile } from './profile.js';
+
+export interface ProfileGenerationOptions {
+  manifestPath: string;
+  outputPath: string;
+  harness: string;
+  features?: string[];
+  modelId?: string;
+  providerId?: string;
+  providerName?: string;
+  providerBaseUrl?: string;
+  providerApi?: 'anthropic-messages' | 'openai-responses' | 'openai-completions' | 'google-generative-ai';
+  apiKeyEnvVar?: string;
+  contextLimit?: number;
+  maxOutputTokens?: number;
+  mcpServers?: HeadlessProfile['mcpServers'];
+  effort?: HeadlessProfile['model']['effort'];
+}
+
+type BundleManifest = Record<string, unknown> & { capabilityCatalog?: HeadlessCapabilityCatalog };
+
+const HARNESS_FILES = {
+  'claude-code': { binary: 'bin/claude', prompt: 'prompt.md', version: 'claudeCodeVersion', digest: 'systemPromptDigest' },
+  codex: { binary: 'bin/codex', prompt: 'codex-prompt.md', version: 'codexVersion', digest: 'codexSystemPromptDigest' },
+  pi: { binary: 'bin/pi/pi', prompt: 'pi-prompt.md', version: 'piVersion', digest: 'piSystemPromptDigest' },
+} as const;
+
+const DEFAULT_MODELS: Record<keyof typeof HARNESS_FILES, HeadlessProfile['model']> = {
+  'claude-code': { provider: 'anthropic', requestedId: 'claude-sonnet-4-6', effort: 'high' },
+  codex: { provider: 'openai', requestedId: 'gpt-5.4-mini', effort: 'high' },
+  pi: { provider: 'cindy', requestedId: 'claude-sonnet-4-6', contextLimit: 200_000, maxOutputTokens: 32_000, effort: 'high' },
+};
+
+function relativeFromOutput(outputPath: string, bundlePath: string): string {
+  const relative = path.relative(path.dirname(path.resolve(outputPath)), bundlePath);
+  return relative || path.basename(bundlePath);
+}
+
+function requireManifestString(manifest: BundleManifest, field: string): string {
+  const value = manifest[field];
+  if (typeof value !== 'string' || value.trim() === '') throw new Error(`bundle manifest is missing ${field}`);
+  return value;
+}
+
+function harnessEntry(catalog: HeadlessCapabilityCatalog, harness: string): HeadlessHarnessCapability {
+  const entry = catalog.harnesses.find((item) => item.backend === harness);
+  if (!entry) throw new Error(`bundle does not provide harness: ${harness}`);
+  if (!ADAPTER_HARNESSES.has(harness as HeadlessProfile['agentBackend']) || entry.adapterSupported === false) {
+    throw new Error(`DETECTED_BUT_UNSUPPORTED: harness ${harness}`);
+  }
+  return entry;
+}
+
+export function generateProfileFromManifest(manifest: BundleManifest, options: ProfileGenerationOptions): HeadlessProfile {
+  const discovered = discoverCapabilityCatalog(manifest.capabilityCatalog);
+  const catalog = manifest.capabilityCatalog as HeadlessCapabilityCatalog;
+  const entry = harnessEntry(catalog, options.harness);
+  const harness = options.harness as keyof typeof HARNESS_FILES;
+  const selected = new Set(options.features ?? []);
+  if (options.mcpServers?.length) selected.add('remoteHttpMcp');
+  const unsupported = [...selected].filter((id) => discovered.support[id] !== 'SUPPORTED' || !entry.features.includes(id));
+  if (unsupported.length) throw new Error(`DETECTED_BUT_UNSUPPORTED: ${unsupported.join(', ')}`);
+
+  const files = HARNESS_FILES[harness];
+  const bundleRoot = path.dirname(path.resolve(options.manifestPath));
+  const defaults = catalog.defaultValues ?? {};
+  const enabled = (id: string) => selected.has(id) || (selected.size === 0 && defaults[id] === true);
+  const defaultModel = entry.defaultModel ?? DEFAULT_MODELS[harness];
+  const supportedModelIds = entry.supportedModelIds?.length ? [...entry.supportedModelIds] : [defaultModel.requestedId];
+  const requestedId = options.modelId ?? defaultModel.requestedId;
+  const customPiModel = harness === 'pi' && !supportedModelIds.includes(requestedId);
+  if (harness !== 'pi' && !supportedModelIds.includes(requestedId)) throw new Error(`model ${requestedId} is not supported by harness ${harness}`);
+
+  let nativeProviders: HeadlessProfile['nativeProviders'];
+  let model: HeadlessProfile['model'] = { ...defaultModel, requestedId, effort: options.effort ?? defaultModel.effort ?? 'high' };
+  if (customPiModel) {
+    if (!options.providerId || !options.providerBaseUrl || !options.providerApi || !options.contextLimit || !options.maxOutputTokens) {
+      throw new Error('custom Pi models require --provider, --base-url, --api, --context-limit and --max-output-tokens');
+    }
+    model = { provider: options.providerId, requestedId, contextLimit: options.contextLimit, maxOutputTokens: options.maxOutputTokens, effort: options.effort ?? defaultModel.effort ?? 'high' };
+    nativeProviders = [{
+      id: options.providerId,
+      name: options.providerName ?? options.providerId,
+      baseUrl: options.providerBaseUrl,
+      api: options.providerApi,
+      ...(options.apiKeyEnvVar ? { apiKeyEnvVar: options.apiKeyEnvVar } : {}),
+      models: [{ id: requestedId, contextWindow: options.contextLimit, maxTokens: options.maxOutputTokens }],
+    }];
+    supportedModelIds.push(requestedId);
+  }
+  if (selected.has('remoteHttpMcp') && !options.mcpServers?.length) {
+    throw new Error('remoteHttpMcp requires --mcp-config with at least one server');
+  }
+  if (selected.has('nativeProviders') && !nativeProviders?.length) {
+    throw new Error('nativeProviders requires a custom Pi model configuration');
+  }
+
+  const compaction = defaults.compaction;
+  return validateProfile({
+    id: `generated-${harness}`,
+    version: 1,
+    agentBackend: harness,
+    agentBinaryPath: relativeFromOutput(options.outputPath, path.join(bundleRoot, ...files.binary.split('/'))),
+    agentBinaryVersion: requireManifestString(manifest, files.version),
+    supportedModelIds,
+    model,
+    permissionMode: 'bypassPermissions',
+    systemPromptFile: relativeFromOutput(options.outputPath, path.join(bundleRoot, files.prompt)),
+    expectedSystemPromptDigest: requireManifestString(manifest, files.digest),
+    makerMemory: enabled('makerMemory'),
+    nativeMemory: enabled('nativeMemory'),
+    projectContext: enabled('projectContext'),
+    containerSandbox: true,
+    ...(enabled('attachments') ? { inputPolicy: { attachments: true, workspaceOnly: true } } : {}),
+    ...(enabled('piProjectSkills') ? { piProjectSkills: { enabled: true, roots: ['.pi/skills', '.agents/skills'] } } : {}),
+    ...(compaction && typeof compaction === 'object' ? { compaction } : {}),
+    ...(nativeProviders ? { nativeProviders } : {}),
+    ...(options.mcpServers?.length ? { mcpServers: options.mcpServers } : {}),
+  });
+}

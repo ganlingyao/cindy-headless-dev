@@ -13,6 +13,7 @@ try {
   await execFileAsync('node', [path.join(repoRoot, 'apps', 'cindy-headless', 'scripts', 'package-release.mjs')], { env: { ...process.env, CINDY_HEADLESS_RELEASE_DIR: path.join(temporary, 'release') } });
   const release = JSON.parse(await readFile(path.join(temporary, 'release', 'release-manifest.json'), 'utf8'));
   assert.equal(release.product, 'cindy-headless');
+  assert.equal(release.cindyUpstreamCommit, bundleManifest.cindyUpstreamCommit);
   assert.equal(release.includesVendorBinaries, false);
   assert.equal(release.assets.length, 1);
   const sums = await readFile(path.join(temporary, 'release', 'SHA256SUMS'), 'utf8');
@@ -41,6 +42,7 @@ try {
   await scan(releaseRoot);
   const compatibility = JSON.parse(await readFile(path.join(releaseRoot, 'harbor-compatibility.json'), 'utf8'));
   assert.equal(typeof compatibility.harborCommit, 'string');
+  assert.equal(compatibility.cindyUpstreamCommit, bundleManifest.cindyUpstreamCommit);
   console.log(JSON.stringify({ ok: true }));
 } finally {
   await rm(temporary, { recursive: true, force: true });

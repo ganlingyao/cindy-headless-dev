@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assertSafeExecutionProfile, CINDY_HEADLESS_VERSION, compatibilityReport } from './compatibility.js';
+import { assertSafeExecutionProfile, capabilityCatalog, CINDY_HEADLESS_VERSION, CINDY_UPSTREAM_COMMIT, compatibilityReport, discoverCapabilityCatalog } from './compatibility.js';
 import { validateProfile } from './profile.js';
 
-const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 const base = {
   id: 'compatibility-test',
@@ -20,17 +20,69 @@ const base = {
 } as const;
 
 describe('headless compatibility contract', () => {
+  it('publishes a stable web-discovery capability catalog', () => {
+    const catalog = capabilityCatalog('claude-code');
+    expect(catalog.contractVersion).toBe(1);
+    expect(catalog.harnesses).toEqual([{ id: 'cindy-claude', backend: 'claude-code', features: ['projectContext', 'makerMemory', 'nativeMemory', 'compaction', 'attachments', 'remoteHttpMcp'], adapterSupported: true }]);
+    expect(catalog.features.projectContext).toEqual({ type: 'boolean', control: 'profile', default: false });
+  });
+
+  it('advertises Cindy memory controls for Pi while keeping the backend identity', () => {
+    const catalog = capabilityCatalog('pi');
+    expect(catalog.harnesses[0]).toMatchObject({ id: 'cindy-pi', backend: 'pi' });
+    expect(catalog.harnesses[0].features).toEqual(['projectContext', 'makerMemory', 'nativeMemory', 'compaction', 'attachments', 'piProjectSkills', 'remoteHttpMcp', 'nativeProviders']);
+    expect(catalog.features.makerMemory).toBeDefined();
+  });
+
+  it('reports unknown features and harnesses instead of hiding them', () => {
+    const catalog = capabilityCatalog();
+    catalog.features.futureFeature = { type: 'boolean', control: 'profile', default: false };
+    catalog.harnesses.push({ id: 'future', backend: 'future-agent', features: ['futureFeature'], adapterSupported: true });
+    const discovered = discoverCapabilityCatalog(catalog);
+    expect(discovered.support.futureFeature).toBe('DETECTED_BUT_UNSUPPORTED');
+    expect(discovered.harnesses.at(-1)).toMatchObject({ backend: 'future-agent', adapterSupported: false, status: 'DETECTED_BUT_UNSUPPORTED' });
+  });
+
+  it('rejects a manifest without a capability catalog', () => {
+    expect(() => discoverCapabilityCatalog(undefined)).toThrow('bundle manifest does not contain capabilityCatalog');
+  });
+
+  it('reflects explicit adapter support and profile feature coverage', () => {
+    const catalog = capabilityCatalog();
+    catalog.harnesses[1].adapterSupported = false;
+    const discovered = discoverCapabilityCatalog(catalog);
+    expect(discovered.harnesses.find((item) => item.backend === 'codex')?.status).toBe('DETECTED_BUT_UNSUPPORTED');
+    for (const harness of discovered.harnesses.filter((item) => item.status === 'SUPPORTED')) {
+      expect(harness.features.every((id) => discovered.support[id] === 'SUPPORTED')).toBe(true);
+    }
+  });
+
   it('keeps the runtime and package versions aligned', () => {
-    expect(CINDY_HEADLESS_VERSION).toBe(packageVersion);
+    expect(CINDY_HEADLESS_VERSION).toBe(packageMetadata.version);
+    expect(CINDY_UPSTREAM_COMMIT).toBe(packageMetadata.cindyUpstreamCommit);
   });
 
   it('describes the backend transport and required capabilities', () => {
     expect(compatibilityReport(validateProfile(base))).toMatchObject({
       schemaVersion: 1,
       contractVersion: 1,
+      cindyUpstreamCommit: CINDY_UPSTREAM_COMMIT,
       transport: 'codex-app-server-jsonrpc',
       requiredCapabilities: expect.arrayContaining(['multi-turn-session', 'mcp']),
     });
+  });
+
+  it('describes the Pi RPC transport', () => {
+    const pi = validateProfile({
+      ...base,
+      agentBackend: 'pi',
+      agentBinaryPath: '/opt/pi/pi',
+      agentBinaryVersion: '0.83.0',
+      model: { ...base.model, contextLimit: 200_000 },
+      permissionMode: 'bypassPermissions',
+      containerSandbox: true,
+    });
+    expect(compatibilityReport(pi).transport).toBe('pi-rpc-jsonl');
   });
 
   it('rejects unsandboxed permission bypass by default', () => {

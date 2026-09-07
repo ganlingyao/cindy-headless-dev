@@ -20,6 +20,8 @@ export interface CodexMemoryBridge {
   extraArgs: string[];
   extraEnv: Record<string, string>;
   port: number;
+  token: string;
+  url: string;
   shutdown(): Promise<void>;
 }
 
@@ -140,6 +142,8 @@ export async function startCodexMemoryBridge(options: {
   logger.info('Codex memory bridge listening', { port, server: SERVER_NAME });
   return {
     port,
+    token,
+    url,
     extraEnv: { [TOKEN_ENV]: token },
     extraArgs: [
       // Do not inherit Desktop/plugin MCP entries from a user's CODEX_HOME.

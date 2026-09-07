@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, deriveTurnStallMs, extractProviderUsage, modelCapabilityAdditions, normalizeTraceEvents } from './host.js';
+import { classifyFailure, codexMcpArgs, deriveTurnStallMs, extractProviderUsage, modelCapabilityAdditions, normalizeTraceEvents, piProjectSkillsEvidence } from './host.js';
+import { HeadlessRemoteMcpProvider } from './headless-integrations.js';
 import type { HeadlessProfile } from './profile.js';
 
 describe('Headless result classification', () => {
@@ -37,8 +38,30 @@ describe('Headless result classification', () => {
   });
 
   it('normalizes provider usage without double-counting cache tokens', () => {
-    const usage = extractProviderUsage([{ type: 'done', data: { usage: { input_tokens: 3, cache_read_input_tokens: 10, cache_creation_input_tokens: 5, output_tokens: 7 }, total_cost_usd: 0.25 } }]);
+    const usage = extractProviderUsage([{ type: 'done', data: { usage: { input_tokens: 3, cache_read_input_tokens: 10, cache_creation_input_tokens: 5, output_tokens: 7 }, total_cost_usd: 0.25, modelUsageCumulativeStartsAtZero: true } }]);
     expect(usage.normalizedUsage).toEqual({ inputTokens: 3, cacheReadTokens: 10, cacheCreationTokens: 5, outputTokens: 7, costUsd: 0.25 });
+  });
+
+  it('derives and aggregates Claude multi-turn usage from cumulative snapshots', () => {
+    const usage = extractProviderUsage([
+      { type: 'done', turnAttemptToken: 1, data: { usage: { input_tokens: 3, cache_read_input_tokens: 10, cache_creation_input_tokens: 5, output_tokens: 7 }, total_cost_usd: 0.25, modelUsageCumulativeStartsAtZero: true } },
+      { type: 'done', turnAttemptToken: 2, data: { usage: { input_tokens: 8, cache_read_input_tokens: 21, cache_creation_input_tokens: 7, output_tokens: 16 }, total_cost_usd: 0.6, modelUsageCumulativeStartsAtZero: true } },
+    ]);
+    expect(usage.normalizedUsage).toEqual({ inputTokens: 8, cacheReadTokens: 21, cacheCreationTokens: 7, outputTokens: 16, costUsd: 0.6 });
+    expect(usage.rawProviderUsage).toMatchObject({ aggregation: 'cumulative-delta', turns: [{ turnAttemptToken: 1 }, { turnAttemptToken: 2 }] });
+    expect(usage.usageComplete).toBe(true);
+  });
+
+  it('prefers complete Claude request segments when a resumed cumulative baseline is unknown', () => {
+    const usage = extractProviderUsage([{ type: 'done', data: {
+      usage: { input_tokens: 1003, cache_read_input_tokens: 2010, cache_creation_input_tokens: 305, output_tokens: 407 },
+      usageSegments: [{ inputTokens: 3, cacheReadTokens: 10, cacheCreateTokens: 5, outputTokens: 7 }],
+      usageSegmentsComplete: true,
+      modelUsageCumulativeStartsAtZero: false,
+      total_cost_usd: 1.25,
+    } }]);
+    expect(usage.normalizedUsage).toEqual({ inputTokens: 3, cacheReadTokens: 10, cacheCreationTokens: 5, outputTokens: 7, costUsd: 0 });
+    expect(usage.usageComplete).toBe(false);
   });
 
   it('reconstructs current Claude usage from request metadata and terminal status', () => {
@@ -57,14 +80,67 @@ describe('Headless result classification', () => {
     expect(usage.normalizedUsage).toEqual({ inputTokens: 11, cacheReadTokens: 13, cacheCreationTokens: 0, outputTokens: 17, costUsd: 0 });
   });
 
+  it('aggregates Codex multi-turn usage including cache tokens', () => {
+    const usage = extractProviderUsage([
+      { type: 'done', turnAttemptToken: 1, data: { usage: { promptTokens: 11, cachedTokens: 13, completionTokens: 17, reasoningTokens: 5 } } },
+      { type: 'done', turnAttemptToken: 2, data: { usage: { promptTokens: 19, cachedTokens: 23, completionTokens: 29, reasoningTokens: 7 } } },
+    ], 'codex');
+    expect(usage.normalizedUsage).toEqual({ inputTokens: 30, cacheReadTokens: 36, cacheCreationTokens: 0, outputTokens: 46, costUsd: 0 });
+    expect(usage.rawProviderUsage).toMatchObject({ aggregation: 'per-turn', turns: [{ turnAttemptToken: 1 }, { turnAttemptToken: 2 }] });
+  });
+
+  it('normalizes Pi per-turn usage and cost', () => {
+    const usage = extractProviderUsage([{ type: 'done', data: { usage: { inputTokens: 11, cacheReadTokens: 13, cacheCreationTokens: 2, outputTokens: 17 }, totalCostUsd: 0.42 } }], 'pi');
+    expect(usage.normalizedUsage).toEqual({ inputTokens: 11, cacheReadTokens: 13, cacheCreationTokens: 2, outputTokens: 17, costUsd: 0.42 });
+  });
+
+  it('aggregates Pi multi-turn usage, cache, and cost', () => {
+    const usage = extractProviderUsage([
+      { type: 'done', turnAttemptToken: 1, data: { usage: { inputTokens: 11, cacheReadTokens: 13, cacheCreationTokens: 2, outputTokens: 17, segments: [{ costUsd: 0.42 }] } } },
+      { type: 'done', turnAttemptToken: 2, data: { usage: { inputTokens: 19, cacheReadTokens: 23, cacheCreationTokens: 3, outputTokens: 29, segments: [{ costUsd: 0.58 }] } } },
+    ], 'pi');
+    expect(usage.normalizedUsage).toEqual({ inputTokens: 30, cacheReadTokens: 36, cacheCreationTokens: 5, outputTokens: 46, costUsd: 1 });
+    expect(usage.rawProviderUsage).toMatchObject({ aggregation: 'per-turn', turns: [{ turnAttemptToken: 1 }, { turnAttemptToken: 2 }] });
+  });
+
   it('injects an explicit context limit and preserves the agent default when omitted', () => {
     const profile = {
-      model: { provider: 'moonshot', requestedId: 'moonshot/kimi-k3', contextLimit: 1_048_576 },
+      model: { provider: 'moonshot', requestedId: 'moonshot/kimi-k3', contextLimit: 1_048_576, effort: 'high' },
     } as HeadlessProfile;
     expect(modelCapabilityAdditions(profile)?.availableModels[0]).toMatchObject({
       id: 'moonshot/kimi-k3',
       contextWindow: 1_048_576,
+      efforts: ['high'],
+      defaultEffort: 'high',
     });
     expect(modelCapabilityAdditions({ ...profile, model: { ...profile.model, contextLimit: undefined } })).toBeUndefined();
+  });
+
+  it('projects deterministic Pi project Skills evidence into artifacts', () => {
+    expect(piProjectSkillsEvidence(null)).toEqual({ revision: null, count: 0, discoveredSkills: [] });
+    expect(piProjectSkillsEvidence({
+      identity: { canonicalRepoRoot: 'C:\\repo' },
+      approval: { revision: 'headless-profile:abc123' },
+      discovered: { skills: ['C:\\repo\\.pi\\skills\\review', 'C:\\repo\\.agents\\skills\\test.md'] },
+    } as never)).toEqual({
+      revision: 'headless-profile:abc123',
+      count: 2,
+      discoveredSkills: ['.pi/skills/review', '.agents/skills/test.md'],
+    });
+  });
+
+  it('serializes custom Codex MCP headers as secret environment references', () => {
+    process.env.TEST_MCP_TOKEN = 'secret';
+    process.env.TEST_MCP_HEADER = 'header-secret';
+    try {
+      const provider = new HeadlessRemoteMcpProvider({ id: 'docs', transport: 'http', url: 'https://mcp.example.test', bearerTokenEnvVar: 'TEST_MCP_TOKEN', headerEnvVars: { 'X-Api.Key': 'TEST_MCP_HEADER' } });
+      const config = codexMcpArgs([provider], '/workspace');
+      expect(config.extraArgs).toContain('mcp_servers.docs.env_http_headers."X-Api.Key"="TEST_MCP_HEADER"');
+      expect(config.extraArgs.join(' ')).not.toContain('secret');
+      expect(config.extraEnv).toMatchObject({ TEST_MCP_TOKEN: 'secret', TEST_MCP_HEADER: 'header-secret' });
+    } finally {
+      delete process.env.TEST_MCP_TOKEN;
+      delete process.env.TEST_MCP_HEADER;
+    }
   });
 });

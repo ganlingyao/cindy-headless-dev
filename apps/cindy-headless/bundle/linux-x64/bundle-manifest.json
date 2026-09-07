@@ -1,21 +1,161 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "headlessContractVersion": 1,
-  "agentBackend": "claude-code",
-  "cindyHeadlessVersion": "0.1.9",
-  "cindyCommit": "17720c8da1109e1f24401f719feb0ed47ca27de3",
-  "lockfileDigest": "f5e65e6e1610e825efcdc4caf601283a8dc990641cf568e7556e844e4ef73697",
-  "cliDigest": "07ad0777925ce11ebf512bcfa991ab0bc2ad69ce739ae05ab4e9007e322507d7",
-  "systemPromptDigest": "17fc96a52444260aa44b85c0de216b5e29086a4e86202d8840f8dc1ba9391221",
-  "codexSystemPromptDigest": "17fc96a52444260aa44b85c0de216b5e29086a4e86202d8840f8dc1ba9391221",
+  "bundleMode": "development",
+  "capabilityCatalog": {
+    "schemaVersion": 1,
+    "contractVersion": 1,
+    "harnesses": [
+      {
+        "id": "cindy-claude",
+        "backend": "claude-code",
+        "features": [
+          "projectContext",
+          "makerMemory",
+          "nativeMemory",
+          "compaction",
+          "attachments",
+          "remoteHttpMcp"
+        ],
+        "adapterSupported": true,
+        "supportedModelIds": [
+          "claude-sonnet-4-6"
+        ],
+        "defaultModel": {
+          "provider": "anthropic",
+          "requestedId": "claude-sonnet-4-6",
+          "effort": "high"
+        }
+      },
+      {
+        "id": "cindy-codex",
+        "backend": "codex",
+        "features": [
+          "projectContext",
+          "makerMemory",
+          "nativeMemory",
+          "compaction",
+          "attachments",
+          "remoteHttpMcp"
+        ],
+        "adapterSupported": true,
+        "supportedModelIds": [
+          "gpt-5.4-mini"
+        ],
+        "defaultModel": {
+          "provider": "openai",
+          "requestedId": "gpt-5.4-mini",
+          "effort": "high"
+        }
+      },
+      {
+        "id": "cindy-pi",
+        "backend": "pi",
+        "features": [
+          "projectContext",
+          "makerMemory",
+          "nativeMemory",
+          "compaction",
+          "attachments",
+          "piProjectSkills",
+          "remoteHttpMcp",
+          "nativeProviders"
+        ],
+        "adapterSupported": true,
+        "supportedModelIds": [
+          "claude-sonnet-4-6"
+        ],
+        "defaultModel": {
+          "provider": "cindy",
+          "requestedId": "claude-sonnet-4-6",
+          "contextLimit": 200000,
+          "maxOutputTokens": 32000,
+          "effort": "high"
+        }
+      }
+    ],
+    "features": {
+      "projectContext": {
+        "type": "boolean",
+        "control": "profile",
+        "default": false
+      },
+      "makerMemory": {
+        "type": "boolean",
+        "control": "profile",
+        "default": false
+      },
+      "nativeMemory": {
+        "type": "boolean",
+        "control": "profile",
+        "default": false
+      },
+      "compaction": {
+        "type": "object",
+        "control": "profile",
+        "default": {
+          "enabled": true,
+          "thresholdPct": 80
+        }
+      },
+      "attachments": {
+        "type": "boolean",
+        "control": "profile",
+        "default": false
+      },
+      "piProjectSkills": {
+        "type": "boolean",
+        "control": "profile",
+        "default": false
+      },
+      "remoteHttpMcp": {
+        "type": "array",
+        "control": "profile",
+        "default": []
+      },
+      "nativeProviders": {
+        "type": "array",
+        "control": "profile",
+        "default": []
+      }
+    },
+    "defaultValues": {
+      "projectContext": false,
+      "makerMemory": false,
+      "nativeMemory": false,
+      "compaction": {
+        "enabled": true,
+        "thresholdPct": 80
+      },
+      "attachments": false,
+      "piProjectSkills": false,
+      "remoteHttpMcp": [],
+      "nativeProviders": []
+    }
+  },
+  "cindyHeadlessVersion": "0.3.1",
+  "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2",
+  "cindyCommit": "7b19394409d7ac7759ac1fa8f8d06769728afbdd",
+  "sourceDirty": true,
+  "lockfileDigest": "e3913adc88a80fbf9f4816320171606828ba20841ef7c9bf1431ed932d382660",
+  "cliDigest": "6a40e9d019185a5f1055d6e3ba515dc5a1ba5b9d22d27f9349c386bb204fd81b",
+  "evalCliDigest": "bd2ac8294f968cbadedb4ef8d219eb1b2193bb7a623b22416df95778841e14d3",
+  "profilesDigest": "d670337e7e20be1e1daeb3e9b638379db6733c2bb8fb1c4610e08082175709e5",
+  "systemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
+  "codexSystemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
+  "piSystemPromptDigest": "cf79194d42a19e1a00d018efbb2bc893ce746a7bcd3e022378a3b2dd77c06874",
   "nodeBinaryDigest": "1bec56ef7cfa9a76f3e0b7c0a87f220eb73f23102b9c0b4c7529a3f7c3ce7c31",
   "nodeVersion": "22.22.0",
-  "claudeBinaryDigest": "22cfd6f5b3061c0391ba84e9cf8c9deaa37783aac18b004d42ec061e98f00691",
+  "claudeBinaryDigest": "f7dd62ae415378018cd21dd950eb3bac174ab085830304d3b8b098146bfd47b6",
   "codexBinaryDigest": "a2a05dafaa1acb002a45eaec0a462de5b13694fcfcd7bc43305f14781ce7be14",
-  "claudeCodeVersion": "2.1.219",
+  "piBinaryDigest": "ce91e1f8bff6176c6a23a690bd0bc4c6e1f5bee1b1183cd2a3b1e92d88c9038a",
+  "piRuntimeDigest": "7c9ec544c8d12bbe570262e5f546d1f4bbaa82d7ce033720fb9b07cb0a215787",
+  "claudeCodeVersion": "2.1.259",
   "codexVersion": "0.145.0",
-  "observedClaudeVersion": "2.1.219 (Claude Code)",
+  "piVersion": "0.84.4",
+  "observedClaudeVersion": "2.1.259 (Claude Code)",
   "observedCodexVersion": "codex-cli 0.145.0",
+  "observedPiVersion": "0.84.4",
   "platform": "linux-x64",
-  "generatedAt": "2026-08-13T18:40:55+08:00"
+  "generatedAt": "2026-09-07T15:06:43+08:00"
 }

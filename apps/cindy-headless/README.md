@@ -1,10 +1,13 @@
 # Cindy Headless
 
-Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-core` and MCP contracts, then exposes the Claude Code and Codex harnesses through a CLI and a Harbor `BaseAgent` adapter. It does not recreate Cindy Desktop, Electron UI, or the Agent binaries.
+Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-core` and MCP contracts, then exposes the Claude Code, Codex, and Pi harnesses through a CLI and a Harbor `BaseAgent` adapter. It does not recreate Cindy Desktop, Electron UI, or the Agent binaries.
+
+Version `0.3.1` is based on Cindy upstream commit `b91b78c507a6605bb631ad6e85bf82d94d71efd2`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
+
+The current feature-by-feature parity inventory is maintained in
+[`CINDY_FEATURE_PARITY.md`](CINDY_FEATURE_PARITY.md).
 
 ## Quick start
-
-Authorized internal users can download published packages from the private [Cindy Headless Releases](https://github.com/ganlingyao/cindy-headless-releases/releases). The dedicated release repository contains runtime and access-controlled full packages. Verify the selected archive with the attached `SHA256SUMS` before extraction, and confirm its `release-manifest.json.sourceCommit` matches the reviewed source revision.
 
 From a source checkout on Windows:
 
@@ -16,7 +19,9 @@ cd ..\..\AgentTest\harbor
 uv run harbor eval execute <freeze-id> --workspace-root . --approve
 ```
 
-From the runtime GitHub Release asset, extract `cindy-headless-linux-x64-runtime-<version>.tar.gz`, configure the gateway, and run `prepare-binaries.ps1` or `prepare-binaries.sh`. The public archive is the Cindy Headless runtime, not a Claude Code or Codex redistribution. The preparation script downloads the exact pinned Agent runtimes from their official sources and verifies SHA-256 before use.
+The deployable artifact is `apps/cindy-headless/bundle/linux-x64`. Upload that
+directory as one immutable bundle after `verify:bundle` succeeds. No separate
+release archive is required for Harbor.
 
 ## Layout
 
@@ -31,7 +36,7 @@ apps/cindy-headless/harbor-compatibility.json  Harbor adapter contract and pinne
 ## Prerequisites
 
 - Node.js 22 and the repository dependencies installed with pnpm.
-- A pinned Linux x64 Claude Code and Codex binary for bundle creation.
+- Pinned Linux x64 Claude Code, Codex, and complete Pi runtime distributions for bundle creation.
 - Harbor 0.20 for container tests.
 - Either a temporary isolated Codex home or the unified gateway configuration.
 
@@ -44,7 +49,7 @@ Copy-Item apps/cindy-headless/config.example.json apps/cindy-headless/config.loc
 # Edit config.local.json locally, or set CINDY_HEADLESS_BASE_URL and CINDY_HEADLESS_API_KEY.
 ```
 
-The config file is ignored. It supports an Anthropic-compatible gateway for Claude and an OpenAI Responses-compatible `/v1` route for Codex. Offline commands such as `version`, `plan` and `report` do not load gateway credentials.
+The config file is ignored. It supports an Anthropic-compatible gateway for Claude and Pi, and an OpenAI Responses-compatible `/v1` route for Codex. Offline commands such as `version`, `plan` and `report` do not load gateway credentials.
 
 ## Build and verify
 
@@ -61,55 +66,59 @@ Build the scored Linux bundle with pinned binaries:
 ```powershell
 $env:CINDY_CLAUDE_BINARY = 'D:\path\to\pinned\claude'
 $env:CINDY_CODEX_BINARY = 'D:\path\to\pinned\codex'
+$env:CINDY_PI_BINARY = 'D:\path\to\pinned\pi-runtime\pi'
 npm --prefix apps/cindy-headless run bundle:linux
 npm --prefix apps/cindy-headless run verify:bundle
 ```
 
-The bundle is registered against one Benchmark Tool backend. The default is
-`claude-code`; set `CINDY_HEADLESS_AGENT_BACKEND=codex` before `bundle:linux`
-when producing a Codex bundle. `bundle-manifest.json.agentBackend` must match
-the selected profile. Rebuild and publish a new immutable release when changing
-the backend; do not reuse a multi-backend manifest or relax Benchmark Tool
-validation.
+One bundle contains Claude Code, Codex, and Pi. Harbor discovers all three from
+`bundle-manifest.json` and selects exactly one harness for each Trial through
+the effective profile. Harness protocols remain independent and are never
+translated into one another.
 
-`bundle-manifest.json` records the Cindy commit, prompt digests, binary digests, observed versions and Headless contract version. Rebuild it whenever runtime source or pinned binaries change.
+`bundle-manifest.json` records the vendored source commit, upstream Cindy commit, prompt digests, binary digests, observed versions and Headless contract version. Rebuild it whenever runtime source or pinned binaries change.
 
-## Release packages
-
-Generate the public runtime package:
-
-```powershell
-npm --prefix apps/cindy-headless run package:runtime
-```
-
-The output under `apps/cindy-headless/release` includes the runtime archive, `bundle-manifest.json`, `release-manifest.json` and `SHA256SUMS`. It does not contain vendor Agent binaries; users obtain the pinned runtimes with the included `prepare-binaries` script. Publish release assets in the dedicated private `ganlingyao/cindy-headless-releases` repository, not in the Cindy source repository.
-
-`package:full` exists behind an explicit vendor-binary flag for controlled/internal distribution. Do not upload a full package publicly until the applicable Claude Code and Codex redistribution terms have been reviewed and the required notices are included. A GitHub Release should be titled `Cindy Headless <version>`; Claude Code and Codex are backends, not the product name.
-
-### Internal full package
-
-For an access-controlled internal test environment, first build and verify the pinned Linux bundle, then generate and validate the full package:
-
-```powershell
-npm --prefix apps/cindy-headless run package:full
-npm --prefix apps/cindy-headless run verify:distribution:full
-```
-
-The output directory contains both the normal runtime archive and `cindy-headless-linux-x64-full-<version>.tar.gz`. The full archive includes the verified Linux x64 Claude Code and Codex binaries under `bin/`, so its recipient can extract and run it in Linux, WSL or the Harbor Linux task container without the initial binary download. It is not a native Windows Agent package. `SHA256SUMS`, `bundle-manifest.json` and `release-manifest.json` must travel with the archive and be checked before use.
-
-The runtime package does not contain a Harbor adapter. Formal Benchmark runs
-use the pinned Harbor fork and its single built-in adapter:
+The bundle does not contain a Harbor adapter. Scored Benchmark runs
+use the adapter maintained in the pinned Harbor checkout:
 `harbor.agents.installed.cindy_headless:CindyHeadlessAgent`. Run Harbor from
 its own checkout and pass `--workspace-root` there. Keep `bundle_dir` and
 `profile_path` relative to that root; never copy an adapter into this repo or
 put a maintainer's local path in a job file. The required adapter contract is
 recorded in `harbor-compatibility.json`.
 
-Treat this as an internal artifact, not a public GitHub Release asset. Store it only in an access-controlled artifact system, retain `VENDOR-BINARIES-NOTICE.txt`, and review the applicable vendor redistribution terms before sharing it outside the organization. The included `prepare-binaries` scripts remain available for repairing or refreshing the pinned binaries, but are not required for the first run of a verified full package.
-
-Before publishing, run `scripts/verify-clean-install.ps1` from a pushed branch. It clones into a temporary directory and verifies that the documented source workflow does not depend on the maintainer's working tree. Run the Harbor smoke separately from the Harbor checkout when gateway credentials and Docker are available.
+`bundleMode: "formal"` means only that the bundle was built from a clean,
+committed source state. `bundleMode: "development"` identifies a dirty local
+build. It is an identity field in the same bundle format, not a second package
+or archive workflow.
 
 ## CLI
+
+Inspect a bundle's credential-free web capability catalog:
+
+```powershell
+node apps/cindy-headless/dist/cli.cjs capabilities --manifest apps/cindy-headless/bundle/linux-x64/bundle-manifest.json
+```
+
+New bundles publish `capabilityCatalog` in `bundle-manifest.json`. It declares
+all packaged harnesses, profile-controlled feature schema, and explicit
+defaults used by upload services to render configuration choices. This catalog
+describes what the package offers; the effective profile and runtime evidence
+record what a particular Run actually enabled.
+
+Generate a portable profile directly from the bundle manifest, then validate it:
+
+```powershell
+node apps/cindy-headless/dist/cli.cjs profile generate --manifest apps/cindy-headless/bundle/linux-x64/bundle-manifest.json --harness codex --output apps/cindy-headless/bundle/linux-x64/effective-profiles/codex.json
+node apps/cindy-headless/dist/cli.cjs profile validate --profile apps/cindy-headless/bundle/linux-x64/effective-profiles/codex.json
+```
+
+Use `--features` with a comma-separated list to opt into declared features. A
+custom Pi model additionally requires `--provider`, `--base-url`, `--api`,
+`--context-limit`, and `--max-output-tokens`; the generator writes the matching
+`nativeProviders` entry so the result remains valid and reproducible.
+Keep generated profiles inside the bundle before upload. Their binary and
+prompt paths are intentionally relative to the profile location so the whole
+bundle remains relocatable in the Harbor task container.
 
 Validate a profile and inspect compatibility:
 
@@ -117,6 +126,7 @@ Validate a profile and inspect compatibility:
 node apps/cindy-headless/dist/cli.cjs profile validate --profile apps/cindy-headless/profiles/cindy-production-codex/profile.example.json
 node apps/cindy-headless/dist/cli.cjs compatibility-report --profile apps/cindy-headless/profiles/cindy-production-codex/profile.example.json
 node apps/cindy-headless/dist/cli.cjs doctor --profile apps/cindy-headless/profiles/cindy-production-codex/profile.example.json
+node apps/cindy-headless/dist/cli.cjs doctor --profile apps/cindy-headless/profiles/cindy-production-pi/profile.example.json
 ```
 
 Run a local task:
@@ -135,9 +145,10 @@ Harbor's token fields overlap by design: `n_input_tokens = inputTokens + cacheCr
 the normalized analysis stream: when a provider emits incremental `text` or
 `thinking` deltas followed by an `isFinal` snapshot, the earlier deltas are
 removed from the normalized stream so downstream analysis does not count the
-same content twice. This adapter currently declares `SUPPORTS_ATIF = False`;
-consumers that compare trajectories across harnesses need an ATIF converter and
-must not parse it as Harbor's standard `trajectory.json`.
+same content twice. Headless itself does not emit Harbor's `trajectory.json`;
+the current Cindy Harbor adapter preserves it as a Cindy-native artifact and
+declares `SUPPORTS_ATIF = False` rather than claiming an unimplemented
+conversion.
 
 ## Harbor smoke test
 
@@ -165,8 +176,8 @@ $root = (Resolve-Path ..\harbor).Path # any Harbor checkout; do not hard-code a 
 uv run --project $root harbor eval execute <freeze-id> --workspace-root $root --approve
 ```
 
-The `<freeze-id>` job must import
-`harbor.agents.installed.cindy_headless:CindyHeadlessAgent`. Harbor resolves
+The `<freeze-id>` job must use the registered `cindy-production` agent backed
+by `harbor.agents.installed.cindy_headless:CindyHeadlessAgent`. Harbor resolves
 the bundle and profile paths relative to `--workspace-root`, so the same job
 works after cloning to another directory. Use `harbor-compatibility.json` to
 check the required Harbor commit and adapter contract before a scored run.
@@ -185,68 +196,104 @@ Treat Headless as a compatibility surface, not a floating checkout:
 
 Classify changes as `COMPATIBLE` (rebuild only), `REQUIRES_ADAPTER_UPDATE` (Headless or Harbor code changes), or `UNSUPPORTED` (Desktop-only capability). Do not silently enable new permissions, providers or throughput caps in a scored run.
 
-The release bundle builder refuses a dirty worktree. Commit the reviewed source on a feature branch before rebuilding; `generatedAt` is derived from that commit timestamp, while `cindyCommit` and binary/source digests bind the artifact to the reviewed revision.
+By default the bundle builder refuses a dirty worktree. Local development can
+set `CINDY_HEADLESS_ALLOW_DIRTY_BUNDLE=1`; the resulting manifest is marked
+`bundleMode: "development"` and must not be used for a scored run. In both
+modes, `generatedAt`, `cindyCommit`, `cindyUpstreamCommit`, and the digests bind
+the artifact to its inputs.
 
 ### When upstream changed before a smoke test
 
-Do not silently run a newly updated Cindy checkout with an old Headless bundle. Before the smoke test, compare the checked-out Cindy commit with `bundle/linux-x64/bundle-manifest.json.cindyCommit` and choose one of these paths:
+Do not silently run newly updated Cindy sources with an old Headless bundle. Before the smoke test, compare the vendored source commit and `package.json.cindyUpstreamCommit` with `bundle/linux-x64/bundle-manifest.json.cindyCommit` and `.cindyUpstreamCommit`, then choose one of these paths:
 
-1. **Test the previous frozen release:** keep the old Cindy checkout and bundle together, record both revisions, and state that the smoke test covers the previous frozen release. This is valid for regression checks, but it does not validate the new upstream commit.
+1. **Test the previous frozen bundle:** keep the old Cindy checkout and bundle together, record both revisions, and state that the smoke test covers the previous frozen bundle. This is valid for regression checks, but it does not validate the new upstream commit.
 2. **Upstream change is `COMPATIBLE`:** sync/rebase the change, run all Headless tests, rebuild and verify the bundle, update the frozen manifest digest, then run Harbor smoke. Typical examples are internal `maker-core` fixes that preserve public contracts.
 3. **Change is `REQUIRES_ADAPTER_UPDATE`:** stop the scored run. Update Headless and/or the Harbor adapter, add contract regression tests, rebuild the bundle, run smoke and a small pilot, then freeze new revisions. This applies to changes in Agent APIs, event/usage schemas, Memory/MCP behavior, profiles, permissions or provider routing.
 4. **Change is `UNSUPPORTED`:** do not imitate or partially enable it in Headless. Record the Desktop-only capability and applicable scope in the compatibility/report output.
 
 Before any scored benchmark, freeze and verify the Cindy commit, Headless commit, bundle manifest digest, Agent binary versions, prompt digests, profile digest, model/endpoint and Benchmark revision. If any one of these differs from the planned run, regenerate the plan or stop the run; never mix a new source checkout with artifacts from an older bundle.
 
+The canonical Pi baseline is `cindy-production-pi`. Its profile enables
+workspace-confined file/image turns and Cindy-approved project Skills from
+`.pi/skills` and `.agents/skills`; the exact discovered Skills are snapshotted
+per session. Its custom MCP list is deliberately frozen empty. The canonical
+Claude Code baseline remains `cindy-production-claude` (also referred to as
+“CC”); do not create a duplicate `cindy-production-cc` identity.
+
+The Pi gateway route in this baseline is deliberately fixed to the
+Anthropic-Messages-compatible Claude model declared by the manifest. Pi BYOM
+profiles carry their own exact API and model metadata. Headless does not yet
+claim Cindy Desktop's dynamic Pi gateway catalog resolution for arbitrary
+Gateway models (`compat`, `samplingParams`, or custom `thinkingLevelMap`).
+
+Structured turns preserve the old string-array format and add attachments:
+
+```json
+[
+  {
+    "text": "Inspect the attached fixture.",
+    "attachments": [
+      { "type": "file", "path": "fixtures/input.txt", "mimeType": "text/plain" }
+    ]
+  }
+]
+```
+
+Attachment paths are relative to `--working-dir`; absolute paths, parent
+traversal, symlink escapes, non-files, and policy limit violations fail closed.
+Remote MCP and Pi BYOM declarations live in the profile. They pin endpoint,
+transport/API and exact model metadata, while bearer/header/API-key values are
+read only from the environment-variable names declared by that profile.
+
 ## Profiles
 
-`model.contextLimit` is optional. When present, Headless injects that exact
+`model.contextLimit` is optional for Claude Code and Codex, and required for Pi. When present, Headless injects that exact
 context window into Maker Core for the selected model; when omitted, the
 underlying Agent/model capability remains authoritative. This setting controls
 Headless context accounting and compaction thresholds, but does not increase an
 upstream model or gateway's actual context capacity.
 
-`run --timeout-ms` is enforced by Headless itself. When the flag is omitted,
-the standalone default is **1800 seconds (1,800,000 ms)**. This default is a
-fallback for direct CLI use; it is not a second independent benchmark policy.
+`run` defaults to `--timeout-owner headless`. In this standalone mode,
+`--timeout-ms` is enforced by Headless and defaults to **1800 seconds
+(1,800,000 ms)**. Headless derives the Maker turn-stall watchdog from that
+deadline and records `timeoutOwner`, `timeoutMs`, and `turnStallMs` in
+`config.json`.
 
-When Harbor owns the run, Harbor's `execution_timeout_sec` is authoritative and
-the Cindy Harbor adapter must pass an explicit Headless deadline slightly
-earlier (currently five seconds earlier, with a minimum of one second). This
-leaves time to abort the Agent and persist partial usage and trace artifacts
-before Harbor terminates the container. Headless derives the Maker turn-stall
-watchdog from the effective `--timeout-ms` and records both `timeoutMs` and
-`turnStallMs` in `config.json`. Do not remove the adapter argument or rely on
-the 1800-second fallback for a Harbor run.
+When Harbor owns the run, the Cindy adapter must pass
+`--timeout-owner external` and must not pass `--timeout-ms`. External mode does
+not create a Headless scoring deadline and disables Headless-injected turn and
+upstream-idle watchdogs. Harbor gives the Agent the complete task budget, marks
+the timeout at its own deadline, and signals Headless during the non-scoring
+cleanup grace period. Headless keeps its signal handlers installed until result,
+usage, identity, and trace artifacts have been persisted.
 
-For example, a 1800-second Harbor deadline produces a 1795-second Headless
-deadline and a 1436-second watchdog. A direct invocation without the flag uses
-1800 seconds and a 1440-second watchdog.
+The five-second session-close bound applies only after execution has ended or
+been interrupted. It protects artifact persistence from a stuck SDK close and
+does not subtract time from the Agent's scoring budget.
 
-## Building a usable Harbor package
+## Building a usable Harbor bundle
 
-Build and verify a release only from a clean, committed feature branch. The
-bundle must be Linux x64 for Docker and must include the matching profile,
-`dist/cli.cjs`, `bundle/`, prompt files, and bundle manifest. Record the source
-commit, bundle SHA-256, profile SHA-256, Cindy/Claude binary versions, model,
-endpoint, and timeout in the runtime manifest. Never mix a newly built bundle
-with an older profile or upload an unverified local directory.
+Build the scored bundle from a clean, committed feature branch. It must be
+Linux x64 and include `dist/cli.cjs`, `dist/eval-cli.cjs`, Node, all three
+harness runtimes, all three prompts, profiles, and `bundle-manifest.json`.
+Never mix a newly built bundle with an older profile or upload an unverified
+directory.
 
-Minimum release checks:
+Minimum bundle checks:
 
 ```powershell
 pnpm --filter cindy-headless typecheck
 pnpm --filter cindy-headless test
 pnpm --filter cindy-headless build
+pnpm --filter cindy-headless bundle:linux
 pnpm --filter cindy-headless verify:bundle
 ```
 
 Register the resulting runtime in Headless Benchmark Tool, run package
 verification, and require `READY` before a Harbor benchmark. A one-task Harbor
 smoke should verify `config.json`, `identity.json`, `result.json`, `usage.json`,
-`trace.jsonl`, and `trace.raw.jsonl`; only then publish the bundle and its
-manifest to the private releases repository. The release README must preserve
-these exact digests and the command used to reproduce the package.
+`trace.jsonl`, and `trace.raw.jsonl`; only then admit the bundle for scored
+runs. Preserve its exact manifest and the command used to reproduce it.
 
 The Kimi gateway examples are
 `profiles/cindy-production-claude/profile.kimi-k3.example.json` and
@@ -260,10 +307,18 @@ It pins `deepseek/deepseek-v4-flash` and a 1,048,576-token declared context
 window. The gateway must actually advertise/support this model; the profile
 does not turn a gateway route into an independent model attestation.
 
+For the production Pi benchmark, use
+`profiles/cindy-production-pi/profile.deepseek-v4-flash.example.json`. It uses
+the neutral `tapsvc-gateway` native provider while preserving the complete
+`deepseek/deepseek-v4-flash` model ID on the OpenAI-compatible request. Do not
+rename that provider to `deepseek`: Pi's built-in provider handling would send
+the bare `deepseek-v4-flash` ID, which the benchmark gateway rejects.
+
 Production profiles are pinned and should be changed only for an explicit experiment:
 
 - `cindy-production-claude`
 - `cindy-production-codex`
+- `cindy-production-pi`
 - `cindy-native-memory`
 - `cindy-planning`
 - `cindy-no-compaction`
