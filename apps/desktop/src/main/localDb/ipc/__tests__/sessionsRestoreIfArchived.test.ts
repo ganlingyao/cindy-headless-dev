@@ -6,15 +6,22 @@
  */
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { messages, sessions } from '../../schema';
+import type { SessionRouteLock } from '../../sessionRouteLock';
+
+type SessionRouteLockMock = SessionRouteLock &
+  MockInstance<(sessionId: string, task: () => Promise<unknown>) => Promise<unknown>>;
 
 const h = vi.hoisted(() => ({
   db: null as ReturnType<typeof drizzle> | null,
   sqlite: null as InstanceType<typeof import('better-sqlite3')> | null,
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   tapWindowBroadcast: vi.fn(),
+  routeLock: vi.fn(async <T>(_sessionId: string, task: () => Promise<T>): Promise<T> =>
+    task(),
+  ) as SessionRouteLockMock,
 }));
 
 vi.mock('electron', () => ({
@@ -30,6 +37,7 @@ vi.mock('../../../logger', () => ({
 }));
 vi.mock('../../client/current', () => ({
   getDbClient: () => ({ drizzle: h.db }),
+  getCurrentDbClientUserId: () => 'test-user',
 }));
 vi.mock('../../dialogueWorkspace', () => ({ ensureDialogueWorkspaceDir: vi.fn() }));
 vi.mock('../../../git-context/prRefsStore', () => ({
@@ -46,6 +54,7 @@ vi.mock('../../../messagePersistBroadcaster', () => ({ noteSessionClearBoundary:
 vi.mock('../../../sessionIds', () => ({ resolveBusinessSessionId: (id: string) => id }));
 
 import { registerSessionIpc } from '../sessions';
+import { setSessionRouteLockImplementation } from '../../sessionRouteLock';
 
 type ExpectedIdentity = {
   workingDir: string | null;
@@ -94,11 +103,13 @@ function createDb(): void {
       feishu_bot_app_id TEXT,
       used_project_context INTEGER NOT NULL DEFAULT 0,
       extra_dirs TEXT NOT NULL DEFAULT '[]',
+      writable_dirs TEXT NOT NULL DEFAULT '[]',
       one_m INTEGER NOT NULL DEFAULT 0,
       workspace_kind TEXT NOT NULL DEFAULT 'project',
       orca_role TEXT,
       remote_host_id TEXT,
       codex_history_has_product_prompt INTEGER,
+      codex_plan_json TEXT,
       im_bot_context_id TEXT,
       im_user_id TEXT,
       summary TEXT,
@@ -106,7 +117,10 @@ function createDb(): void {
       plan_mode_enabled INTEGER NOT NULL DEFAULT 0,
       active_turn_started_at INTEGER,
       active_turn_pid INTEGER,
-      last_turn_ended_at INTEGER
+      last_turn_ended_at INTEGER,
+      list_preview TEXT,
+      list_preview_role TEXT,
+      list_message_count INTEGER
     );
     CREATE TABLE messages (
       id TEXT PRIMARY KEY,
@@ -146,9 +160,15 @@ function readStatus(): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.routeLock.mockImplementation(async (_sessionId, task) => task());
   h.handlers.clear();
   createDb();
+  setSessionRouteLockImplementation(h.routeLock);
   registerSessionIpc();
+});
+
+afterEach(() => {
+  setSessionRouteLockImplementation(null);
 });
 
 describe('local-db:sessions:restore-if-archived', () => {
@@ -161,6 +181,30 @@ describe('local-db:sessions:restore-if-archived', () => {
       sessionId: 'target',
       patch: { status: 'active' },
     });
+  });
+
+  it('waits for the shared task route lock before restoring', async () => {
+    let markWaiting!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      markWaiting = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.routeLock.mockImplementationOnce(async (_sessionId, task) => {
+      markWaiting();
+      await gate;
+      return task();
+    });
+
+    const restoring = restore();
+    await waiting;
+    expect(readStatus()).toBe('archived');
+    release();
+
+    await expect(restoring).resolves.toMatchObject({ status: 'active' });
+    expect(h.routeLock).toHaveBeenCalledWith('target', expect.any(Function));
   });
 
   it.each(['active', 'deleted'])('does not overwrite a newer %s status', async (status) => {
@@ -185,5 +229,13 @@ describe('local-db:sessions:restore-if-archived', () => {
 
   it('throws NOT_FOUND when the session no longer exists', async () => {
     await expect(restore('missing')).rejects.toThrow('[NOT_FOUND]');
+  });
+
+  it('does not restore Bot history through the ordinary task lifecycle', async () => {
+    h.sqlite!.prepare("UPDATE sessions SET source = 'bot' WHERE id = 'target'").run();
+
+    await expect(restore()).rejects.toThrow(/Bot task lifecycle/);
+    expect(readStatus()).toBe('archived');
+    expect(h.tapWindowBroadcast).not.toHaveBeenCalled();
   });
 });

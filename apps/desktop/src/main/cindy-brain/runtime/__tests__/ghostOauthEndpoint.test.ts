@@ -199,6 +199,40 @@ describe('POST /oauth/<key>/connect', () => {
     expect(JSON.parse(outcome.body ?? '{}')).toMatchObject({ ok: false, error: 'TIMEOUT' });
   });
 
+  it('tokenBroker 声明在注入判据返回 false 时被拒，返回 true 时放行', async () => {
+    const brokerDecl: GhostOauthDecl = { ...DECL, tokenBroker: 'feishu' };
+    const secrets = new Map<string, GhostOauthDecl>([['acct', brokerDecl]]);
+    const denied = fakeManager();
+    const forbidden = await handleGhostOauthRequest({
+      method: 'POST',
+      pathname: '/oauth/acct/connect',
+      readBodyText: async () => '',
+      oauthSecrets: secrets,
+      manager: denied,
+      ghostId: 'acme-feishu',
+      isTokenBrokerAuthorized: () => false,
+    });
+    expect(forbidden.status).toBe(200);
+    expect(JSON.parse(forbidden.body ?? '{}')).toMatchObject({
+      ok: false,
+      error: 'BROKER_FORBIDDEN',
+    });
+    expect(denied.connectAccount).not.toHaveBeenCalled();
+
+    const allowed = fakeManager();
+    const ok = await handleGhostOauthRequest({
+      method: 'POST',
+      pathname: '/oauth/acct/connect',
+      readBodyText: async () => '',
+      oauthSecrets: secrets,
+      manager: allowed,
+      ghostId: 'xd-feishu',
+      isTokenBrokerAuthorized: () => true,
+    });
+    expect(ok.status).toBe(200);
+    expect(allowed.connectAccount).toHaveBeenCalled();
+  });
+
   it('GET → 405;流程异常 → 500', async () => {
     expect((await call({ method: 'GET', pathname: '/oauth/acct/connect' })).status).toBe(405);
     expect(
@@ -274,7 +308,7 @@ describe('POST /oauth/<key>/connect · scopes body(降面授权)', () => {
 });
 
 describe('POST /oauth/<key>/insufficient-scopes', () => {
-  const DECLARED_SCOPES = Array.from({ length: 64 }, (_, index) => `scope.${index}`);
+  const DECLARED_SCOPES = Array.from({ length: 320 }, (_, index) => `scope.${index}`);
   const SCOPED: GhostOauthDecl = {
     authorizeUrl: 'https://accounts.example.com/authorize',
     tokenUrl: 'https://accounts.example.com/token',
@@ -325,7 +359,7 @@ describe('POST /oauth/<key>/insufficient-scopes', () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
-  it('64 条边界放行；65 条拒绝', async () => {
+  it('320 条边界放行；321 条拒绝', async () => {
     const accepted = fakeManager();
     expect((await report(JSON.stringify({ scopes: DECLARED_SCOPES }), accepted)).status).toBe(204);
     expect(accepted.reportInsufficientScopes).toHaveBeenCalledWith(

@@ -3,6 +3,8 @@
  *
  * Inputs: active tab, shared search state, optional labels with tab-derived defaults, and actions.
  * Outputs: one width, focus-order-aligned adaptive toolbar, scrolling frame, and transitions.
+ * Settings embeds the same catalog and can intercept Plugins / Skills tab
+ * clicks via `onSelectTab` so the switcher stays inside Settings.
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
@@ -23,6 +25,9 @@ interface PluginManagementLayoutProps {
   searchPlaceholder?: string;
   clearSearchLabel?: string;
   headerActions?: ReactNode;
+  showPrimaryTabs?: boolean;
+  embedded?: boolean;
+  onSelectTab?: (tab: 'plugins' | 'skills') => void;
 }
 
 interface PluginManagementHeaderProps {
@@ -32,6 +37,8 @@ interface PluginManagementHeaderProps {
   onQueryChange?: (query: string) => void;
   searchPlaceholder?: string;
   clearSearchLabel?: string;
+  showPrimaryTabs?: boolean;
+  onSelectTab?: (tab: 'plugins' | 'skills') => void;
 }
 
 interface PluginManagementPageProps {
@@ -53,6 +60,15 @@ export const PLUGIN_MANAGEMENT_FRAME_CLASS = 'mx-auto w-full max-w-[920px] px-8 
 export const PLUGIN_MANAGEMENT_CARD_GRID_CLASS =
   'grid grid-cols-[repeat(auto-fit,minmax(min(100%,22.5rem),1fr))] gap-3';
 
+export const PLUGIN_MANAGEMENT_CONTENT_CONTAINER_CLASS = 'plugin-management-content-frame';
+
+/**
+ * Installed cards keep the two-column catalog track even when only one card is
+ * present, so a lone installed plugin does not stretch across the whole page.
+ * The plugin catalog container collapses this to one column at narrow widths.
+ */
+export const PLUGIN_INSTALLED_CARD_GRID_CLASS = 'plugin-installed-card-grid grid grid-cols-2 gap-3';
+
 const PLUGIN_MANAGEMENT_STACKED_MAX_WIDTH = 720;
 
 export function PluginManagementLayout({
@@ -63,15 +79,25 @@ export function PluginManagementLayout({
   searchPlaceholder,
   clearSearchLabel,
   headerActions,
+  showPrimaryTabs = true,
+  embedded = false,
+  onSelectTab,
 }: PluginManagementLayoutProps) {
   return (
-    <div className="plugin-management-layout-root plugin-motion-root flex h-full min-h-0 w-full flex-col bg-[var(--surface)]">
+    <div
+      className={cn(
+        'plugin-management-layout-root plugin-motion-root flex h-full min-h-0 w-full flex-col',
+        embedded ? 'bg-transparent' : 'bg-[var(--surface)]',
+      )}
+    >
       <PluginManagementHeader
         activeTab={activeTab}
         query={query}
         onQueryChange={onQueryChange}
         searchPlaceholder={searchPlaceholder}
         clearSearchLabel={clearSearchLabel}
+        showPrimaryTabs={showPrimaryTabs}
+        onSelectTab={onSelectTab}
       >
         {headerActions}
       </PluginManagementHeader>
@@ -88,6 +114,8 @@ export function PluginManagementHeader({
   onQueryChange,
   searchPlaceholder,
   clearSearchLabel,
+  showPrimaryTabs = true,
+  onSelectTab,
 }: PluginManagementHeaderProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -116,7 +144,7 @@ export function PluginManagementHeader({
     return () => observer.disconnect();
   }, []);
 
-  const tabs = (
+  const tabs = showPrimaryTabs ? (
     <div
       key="plugin-management-tabs"
       className="plugin-motion-tabs inline-flex shrink-0 rounded-full border p-0.5 backdrop-blur-md"
@@ -132,15 +160,15 @@ export function PluginManagementHeader({
       <TabButton
         active={activeTab === 'plugins'}
         label={t('settings.ghosts.title')}
-        onClick={() => navigate('/plugins')}
+        onClick={() => (onSelectTab ? onSelectTab('plugins') : navigate('/plugins'))}
       />
       <TabButton
         active={activeTab === 'skills'}
         label={t('skillhub.home.title')}
-        onClick={() => navigate('/skillhub/local')}
+        onClick={() => (onSelectTab ? onSelectTab('skills') : navigate('/skillhub/local'))}
       />
     </div>
-  );
+  ) : null;
 
   const tools =
     searchable || children ? (
@@ -227,7 +255,14 @@ export function PluginManagementHeader({
 /** Shared breathing room and page-enter hook for both top-level catalogs. */
 export function PluginManagementPage({ children, className }: PluginManagementPageProps) {
   return (
-    <div className={cn(PLUGIN_MANAGEMENT_FRAME_CLASS, 'flex flex-col pb-16 pt-8', className)}>
+    <div
+      className={cn(
+        PLUGIN_MANAGEMENT_FRAME_CLASS,
+        PLUGIN_MANAGEMENT_CONTENT_CONTAINER_CLASS,
+        'flex flex-col pb-16 pt-8',
+        className,
+      )}
+    >
       {children}
     </div>
   );
@@ -252,17 +287,9 @@ function TabButton({
         'plugin-management-tab h-8 min-w-[88px] select-none rounded-full border border-transparent px-4 text-13 font-medium transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
         active
-          ? 'plugin-motion-selected text-[var(--text-primary)] shadow-[var(--plugin-card-shadow)]'
+          ? 'plugin-motion-selected text-[var(--text-primary)]'
           : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
       )}
-      style={
-        active
-          ? {
-              background: 'color-mix(in srgb, var(--surface-elevated) 86%, transparent)',
-              borderColor: 'color-mix(in srgb, var(--border-default) 48%, transparent)',
-            }
-          : undefined
-      }
     >
       {label}
     </button>

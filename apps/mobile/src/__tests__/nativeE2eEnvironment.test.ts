@@ -69,6 +69,9 @@ describe('native e2e environment', () => {
     expect(visualOfflineFlow).toContain('- inputText: "Offline visual draft"');
     expect(visualOfflineFlow).toContain('- hideKeyboard');
     expect(visualOfflineFlow).toContain('id: "session.sendButton"');
+    expect(visualOfflineFlow).toContain('id: "pendingSend.badge.uploading"');
+    expect(visualOfflineFlow).toContain('- assertNotVisible:');
+    expect(visualOfflineFlow).toContain('id: "connection.syncButton"');
     expect(visualOfflineFlow).not.toContain('session.collaborationReadOnlyComposer');
   });
 
@@ -135,6 +138,32 @@ describe('native e2e environment', () => {
     expect(mockHost.indexOf('applyPendingAgentSwitchIntent(id);')).toBeLessThan(
       mockHost.indexOf("const text = typeof queued?.text === 'string'"),
     );
+  });
+
+  it('keeps the mock host capable of exercising the native worktree two-step flow', () => {
+    const mockHost = readFileSync(resolve(process.cwd(), 'scripts/mock-device-link-host.mjs'), 'utf8');
+
+    for (const channel of [
+      'maker:get-new-maker-defaults',
+      'maker:apply-new-maker-worktree-pref',
+      'worktree:detect-cwd',
+      'worktree:list-branches',
+      'worktree:suggest-name',
+      'worktree:create',
+      'worktree:discard-precreated',
+    ]) {
+      expect(mockHost).toContain(`case '${channel}':`);
+    }
+    expect(mockHost).toContain("const MOCK_WORKTREE_BRANCHES = ['main', 'feature/mobile-worktree', 'release/mobile'];");
+    expect(mockHost).toContain('supportsRecoveryKeyDiscard: true');
+    expect(mockHost).toContain('branches: [...mockWorktree.branches]');
+    expect(mockHost).toContain('current: mockWorktree.currentBranch');
+    expect(mockHost).toContain("path: path.join(normalizedBaseRepo, '.cindy-worktrees', name)");
+    expect(mockHost).toContain('branch: `xdt/${name}`');
+    expect(mockHost).toContain('sourceBranch,');
+    expect(mockHost).toContain('worktreePath: claimedWorktree?.meta.path ?? null');
+    expect(mockHost).toContain("throw mockIpcError('PRECONDITION_FAILED', '会话已认领该 worktree，拒绝补偿回收')");
+    expect(mockHost).toContain('return { discarded: true, branchDeleted: true };');
   });
 
   it('can run reconnect smoke as a self-contained local relay gate', () => {
@@ -222,7 +251,7 @@ describe('native e2e environment', () => {
     );
     // Scope the ordering check to the shared local-session cleanup: both logout and confirmed
     // account deletion use it, and refresh-token deletion remains serialized against refresh.
-    const cleanupStart = authContext.indexOf('const clearLocalSession = useCallback(async () => {');
+    const cleanupStart = authContext.indexOf('const clearLocalSession = useCallback(async (');
     const cleanupBody = authContext.slice(cleanupStart, authContext.indexOf('}, [', cleanupStart));
     const refreshTokenDelete = cleanupBody.indexOf('await serializeRefreshTokenMutation(() =>');
     expect(refreshTokenDelete).toBeGreaterThanOrEqual(0);
@@ -231,8 +260,13 @@ describe('native e2e environment', () => {
     expect(cleanupBody.indexOf('await clearAllMobileVoiceInputHistories().catch(() => undefined);')).toBeLessThan(refreshTokenDelete);
     const logoutStart = authContext.indexOf('const logout = useCallback(async () => {');
     const logoutBody = authContext.slice(logoutStart, authContext.indexOf('}, [', logoutStart));
-    expect(logoutBody).toContain('await persistAccountDeletionReceipt(null);');
-    expect(logoutBody).toContain('await clearLocalSession();');
+    expect(logoutBody).toContain('clearMobileLoginCredentialsForLogout({');
+    expect(logoutBody).toContain(
+      'clearReceipt: () => persistAccountDeletionReceipt(null),',
+    );
+    expect(logoutBody).toContain(
+      'await clearLocalSession({ persistedAuthAlreadyCleared: true });',
+    );
     // 启动(auth 初始化)也要做一次存量清理,防旧版本留下的桌面 key 继续躺在
     // secure storage(与 LEGACY_* token 清理同一批)。
     expect(authContext).toContain('clearAllMobileVoiceCredentials().catch(() => undefined),');
@@ -270,7 +304,10 @@ describe('native e2e environment', () => {
     );
     expect(sessionScreen).toContain('const latestDocument = latestDraft.trim()');
     expect(sessionScreen).toContain('readCurrentDraft: () => draftRef.current');
-    expect(sessionScreen).toContain('onDraftChanged: setComposerDraft');
+    expect(sessionScreen).toContain('if (selection) input?.rememberSelection(text, selection);');
+    expect(sessionScreen).toContain('writeVoiceDraft({ draft: text, initialDocument, initialSelection, insertionEnd: selection?.end, replacement });');
+    expect(sessionScreen).toContain('reconcileComposerVoiceDraft(composerDocumentRef.current, update)');
+    expect(sessionScreen).toContain('reconcileComposerProjectedText(composerDocumentRef.current, latestDraft)');
     expect(sessionScreen).toContain('createMobileVoiceControllerSession({');
     expect(sessionScreen).not.toContain('await sendLatest({ draftOverride: latestDraft });');
   });

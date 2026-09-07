@@ -53,7 +53,11 @@ import {
 import { cn, basename } from '@/lib/utils';
 import { Spinner } from '@/components/ui/spinner';
 import type { ChatMessage } from '@/lib/makerChatStore';
-import { verbForTool, verbLabelKeyForIntent, verbLabelKeyForRow } from '@/lib/agent-actions/verbAggregator';
+import {
+  verbForTool,
+  verbLabelKeyForIntent,
+  verbLabelKeyForRow,
+} from '@/lib/agent-actions/verbAggregator';
 import { statsForToolCall } from '@/lib/agent-actions/diffStats';
 import { extractDisplayParam } from '@/lib/agent-actions/actionPresentation';
 import { SUPPORTED_IMAGE_EXTS, extractExt } from '@/lib/fileTypes';
@@ -65,10 +69,20 @@ import { toRemoteMediaOrigin } from '@/lib/sessionFileOrigin';
 import { rewriteToRemoteMediaOrigin } from '../../../shared/remoteMediaUrl';
 import { useInstalledGhosts } from '@/cindy-brain/useInstalledGhosts';
 import { useChatSessionFile } from './ChatSessionFileContext';
+import {
+  ACTIVITY_ROW_CHEVRON_SLOT_CLASS,
+  ACTIVITY_ROW_COLOR_TRANSITION_CLASS,
+  ACTIVITY_ROW_HOVER_SURFACE_CLASS,
+  ACTIVITY_ROW_RADIUS_CLASS,
+} from './activityRowChrome';
 import { ImageLightbox } from './ImageLightbox';
 import { TextLightbox } from './TextLightbox';
 import { ToolPayloadLightbox, type ToolPayloadMode } from './ToolPayloadLightbox';
 import { useFileChipContextMenu } from './useFileChipContextMenu';
+import {
+  formatToolResultCompactionBytes,
+  parseToolResultCompactionMarker,
+} from '@cindy/maker-shared/tool-result-compaction';
 
 /**
  * 点击走「文件类」交互(diff / 文稿 / 图片 lightbox)的工具:CC 大写 + pi 小写
@@ -224,8 +238,7 @@ function parseAudioTracks(raw: unknown): ToolAudioTrack[] {
         : undefined;
     // kind 字段是新增 — 老版本 server / 历史 message 没带,默认按 'music' 渲染保
     // 持兼容(那条路径自带 cover placeholder,不会因 missing kind 走崩)。
-    const kind: 'music' | 'sound_effect' =
-      obj.kind === 'sound_effect' ? 'sound_effect' : 'music';
+    const kind: 'music' | 'sound_effect' = obj.kind === 'sound_effect' ? 'sound_effect' : 'music';
     out.push({
       kind,
       audioUrl,
@@ -339,10 +352,7 @@ export function extractToolResultMedia(toolResult: string): ToolMediaItem[] {
     // 提取层只打标不裁决,压不压基座由 MessageStream 验证锚卡真含对应图片
     // 后决定(验证不过照常渲染,图片永不消失)。手机端提取器不认该令牌。
     const imagesInCard = parsed.xdt_images_in_card === true;
-    if (
-      typeof parsed.xdt_image_url === 'string' &&
-      isToolImageUrl(parsed.xdt_image_url)
-    ) {
+    if (typeof parsed.xdt_image_url === 'string' && isToolImageUrl(parsed.xdt_image_url)) {
       const modelFile = nextModelFile();
       items.push({
         kind: 'image',
@@ -366,10 +376,7 @@ export function extractToolResultMedia(toolResult: string): ToolMediaItem[] {
     }
     // 协议白名单与图卡同款双世界:老 xdt-video://(遗产只读)+ 新
     // cindy-media://(意识 gen_video 等新链路产物)。
-    if (
-      typeof parsed.xdt_video_url === 'string' &&
-      isToolVideoUrl(parsed.xdt_video_url)
-    ) {
+    if (typeof parsed.xdt_video_url === 'string' && isToolVideoUrl(parsed.xdt_video_url)) {
       items.push({
         kind: 'video',
         url: parsed.xdt_video_url,
@@ -449,16 +456,38 @@ export function extractToolResultImageUrls(toolResult: string): string[] {
     .map((m) => m.url);
 }
 
+/** 文档工具失败时优先展示可执行的 hint，避免把内部 JSON 直接甩给普通用户。 */
+export function humanizeDocumentToolResult(toolName: string, toolResult: string): string | null {
+  const normalized = toolName.replace(/^mcp__/, 'mcp:').replace(/__/g, ':');
+  const documentTool = normalized.split(':').at(-1) ?? normalized;
+  if (!/^(make_docx|make_pptx|make_xlsx|render_pdf|read_sheet|inspect_pdf)$/.test(documentTool)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(toolResult) as {
+      ok?: unknown;
+      data?: { hint?: unknown; message?: unknown };
+    };
+    if (parsed.ok !== false) return null;
+    if (typeof parsed.data?.hint === 'string' && parsed.data.hint.trim()) {
+      return parsed.data.hint.trim();
+    }
+    if (typeof parsed.data?.message === 'string' && parsed.data.message.trim()) {
+      return parsed.data.message.trim();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function commandDisplayText(inp: Record<string, unknown>): string {
   if (typeof inp.displayCommand === 'string') return inp.displayCommand;
   if (typeof inp.command !== 'string') return '';
   return normalizeDisplayCommand(inp.command) ?? inp.command;
 }
 
-function formatInlineInput(
-  toolName: string,
-  inp: Record<string, unknown> | null,
-): string {
+function formatInlineInput(toolName: string, inp: Record<string, unknown> | null): string {
   if (!inp) return '';
   switch (toolName) {
     case 'Bash':
@@ -657,6 +686,12 @@ export function AgentActionRow({
   status = 'done',
 }: AgentActionRowProps) {
   const { t } = useTranslation();
+  const compactedToolResult = parseToolResultCompactionMarker(toolResult);
+  const displayedToolResult = compactedToolResult
+    ? t('chat.toolResultCompacted', {
+        size: formatToolResultCompactionBytes(compactedToolResult.originalBytes),
+      })
+    : toolResult;
   // 会话文件来源:remote 时 Read 图片走远程媒体改写、文件打开走远程分流。
   const fileCtx = useChatSessionFile();
   const toolName = message.toolName ?? '';
@@ -694,7 +729,10 @@ export function AgentActionRow({
       ? descriptor.intent?.action
       : undefined;
   const isRawCommandFallback =
-    descriptor.kind === 'command' && !descriptor.description && !descriptor.intent && showRawCommand;
+    descriptor.kind === 'command' &&
+    !descriptor.description &&
+    !descriptor.intent &&
+    showRawCommand;
   const verbLabel = t(
     intentAction
       ? verbLabelKeyForIntent(intentAction)
@@ -710,9 +748,10 @@ export function AgentActionRow({
     () => extractDisplayParam(descriptor, { hideRawCommandFallback: showRawCommand }),
     [descriptor, showRawCommand],
   );
-  const fileChangeCountText = isFileChange && descriptor.changes.length > 1
-    ? t('chat.agentActionRow.fileChange.files', { count: descriptor.changes.length })
-    : null;
+  const fileChangeCountText =
+    isFileChange && descriptor.changes.length > 1
+      ? t('chat.agentActionRow.fileChange.files', { count: descriptor.changes.length })
+      : null;
   const rawCommand =
     showRawCommand &&
     descriptor.kind === 'command' &&
@@ -721,10 +760,10 @@ export function AgentActionRow({
     descriptor.command
       ? descriptor.command
       : null;
-  const stats = useMemo(
-    () => statsForToolCall(toolName, inp),
-    [toolName, inp],
-  );
+  const userFacingToolResult = displayedToolResult
+    ? (humanizeDocumentToolResult(toolName, displayedToolResult) ?? displayedToolResult)
+    : null;
+  const stats = useMemo(() => statsForToolCall(toolName, inp), [toolName, inp]);
   const isFilePathTool = FILE_PATH_TOOLS.has(toolName);
   const filePath = descriptor.kind === 'file' ? descriptor.filePath : '';
   const singleFileChange =
@@ -812,14 +851,14 @@ export function AgentActionRow({
     // 身份视觉(头像/印记)由结果位的意识卡片头部承担(2026-07-12 Lizi 定案)。
     if (ghostInfo) {
       return (
-        <span className="truncate text-[14px] font-medium text-[var(--msg-tool-card-chevron)]">
+        <span className="truncate text-14 font-medium text-[var(--msg-tool-card-chevron)]">
           「{ghostInfo.name}」· {ghostInfo.tool}
         </span>
       );
     }
     if (fileChangeCountText) {
       return (
-        <span className="min-w-0 truncate text-[14px] font-medium text-[var(--msg-tool-card-chevron)]">
+        <span className="min-w-0 truncate text-14 font-medium text-[var(--msg-tool-card-chevron)]">
           {fileChangeCountText}
         </span>
       );
@@ -836,7 +875,7 @@ export function AgentActionRow({
             'bg-[var(--chat-input-chip-bg)]',
             'border-[var(--chat-input-chip-border)]',
             'text-[var(--chat-input-chip-text)]',
-            'font-mono text-[13px] leading-[18px] whitespace-nowrap',
+            'font-mono text-13 leading-[1.385] whitespace-nowrap',
             'cursor-pointer transition-colors',
             'group-hover:bg-[var(--cmd-palette-item-hover)]',
             'min-w-0 max-w-full',
@@ -849,7 +888,7 @@ export function AgentActionRow({
     }
     return (
       <span
-        className="text-[14px] font-medium text-[var(--msg-tool-card-chevron)] truncate min-w-0 cursor-pointer"
+        className="text-14 font-medium text-[var(--msg-tool-card-chevron)] truncate min-w-0 cursor-pointer"
         title={displayParam.fullTitle}
       >
         {displayParam.text}
@@ -876,7 +915,7 @@ export function AgentActionRow({
   };
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col" data-message-client-id={message.clientId}>
       <button
         type="button"
         onClick={(e) => void onActivate(e.currentTarget)}
@@ -888,14 +927,16 @@ export function AgentActionRow({
             ? `${rowVerbLabel} ${ghostInfo.name} ${ghostInfo.tool}`
             : displayParam || fileChangeCountText
               ? hideVerb
-                ? displayParam?.text ?? fileChangeCountText ?? ''
+                ? (displayParam?.text ?? fileChangeCountText ?? '')
                 : `${rowVerbLabel} ${displayParam?.text ?? fileChangeCountText ?? ''}`
               : rowVerbLabel
         }
         className={cn(
           'group flex w-full items-center gap-[6px]',
-          'rounded-[6px] px-2 py-[3px]',
-          'hover:bg-[var(--msg-code-inline-bg)] transition-colors',
+          ACTIVITY_ROW_RADIUS_CLASS,
+          'px-2 py-[3px]',
+          ACTIVITY_ROW_HOVER_SURFACE_CLASS,
+          ACTIVITY_ROW_COLOR_TRANSITION_CLASS,
           'cursor-pointer select-none outline-none',
           'focus-visible:ring-2 focus-visible:ring-[var(--info-700)]/40',
           'text-left',
@@ -913,47 +954,32 @@ export function AgentActionRow({
           }
           className="inline-flex h-[18px] w-4 items-center justify-center shrink-0 text-[var(--msg-tool-card-chevron)]"
         >
-          {status === 'running' ? (
-            <Spinner size={13} />
-          ) : (
-            <Check size={13} />
-          )}
+          {status === 'running' ? <Spinner size={13} /> : <Check size={13} />}
         </span>
         {!hideVerb && (
-          <span className="text-[14px] text-[var(--msg-tool-card-chevron)] shrink-0">
+          <span className="text-14 text-[var(--msg-tool-card-chevron)] shrink-0">
             {rowVerbLabel}
           </span>
         )}
         {displayCell}
         <span className="flex-1" />
         {stats && (
-          <span className="font-mono text-[13px] font-medium shrink-0 flex gap-1">
+          <span className="font-mono text-13 font-medium shrink-0 flex gap-1">
             <span className="text-[var(--diff-add-fg)]">+{stats.add}</span>
             <span className="text-[var(--diff-del-fg)]">-{stats.del}</span>
           </span>
         )}
         {/* v9: 移除 chevron 上的"查看详情" Tooltip。整行 button 已经是
             统一激活目标，末尾 chevron 只保留视觉提示。 */}
-        <span
-          aria-hidden="true"
-          className={cn(
-            'flex h-[18px] w-[18px] items-center justify-center rounded-[4px] shrink-0',
-            'text-[var(--msg-tool-card-chevron)]',
-            'group-hover:bg-[var(--cmd-palette-item-hover)] transition-colors',
-          )}
-        >
-          {isInlineExpand && expanded ? (
-            <ChevronDown size={13} />
-          ) : (
-            <ChevronRight size={13} />
-          )}
+        <span aria-hidden="true" className={ACTIVITY_ROW_CHEVRON_SLOT_CLASS}>
+          {isInlineExpand && expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
       </button>
       {rawCommand && !expanded && (
         <div
           data-agent-action-raw-command="true"
           title={rawCommand}
-          className="min-w-0 truncate px-2 pb-[3px] pl-[30px] font-mono text-[12px] leading-[18px] text-[var(--msg-tool-card-chevron)]"
+          className="min-w-0 truncate px-2 pb-[3px] pl-[30px] font-mono text-12 leading-[1.5] text-[var(--msg-tool-card-chevron)]"
         >
           {rawCommand}
         </div>
@@ -980,22 +1006,22 @@ export function AgentActionRow({
           )}
         >
           {inlineInputText && (
-            <pre className="whitespace-pre-wrap break-words m-0">
-              {inlineInputText}
-            </pre>
+            <pre className="whitespace-pre-wrap break-words m-0">{inlineInputText}</pre>
           )}
-          {toolResult && (
+          {userFacingToolResult && (
             <>
               {inlineInputText && (
                 <div className="my-2 h-px bg-[var(--msg-tool-card-chevron)]/20" />
               )}
               <pre className="whitespace-pre-wrap break-words m-0 text-[var(--msg-tool-card-chevron)]">
-                {toolResult}
+                {userFacingToolResult}
               </pre>
             </>
           )}
-          {!inlineInputText && !toolResult && (
-            <span className="text-[var(--msg-tool-card-chevron)]">{t('chat.agentActionRow.noContent')}</span>
+          {!inlineInputText && !userFacingToolResult && (
+            <span className="text-[var(--msg-tool-card-chevron)]">
+              {t('chat.agentActionRow.noContent')}
+            </span>
           )}
         </div>
       )}
@@ -1016,9 +1042,7 @@ export function AgentActionRow({
           onClose={closeLightbox}
         />
       )}
-      {lightbox.kind === 'image' && (
-        <ImageLightbox src={lightbox.src} onClose={closeLightbox} />
-      )}
+      {lightbox.kind === 'image' && <ImageLightbox src={lightbox.src} onClose={closeLightbox} />}
       {lightbox.kind === 'payload' && (
         <ToolPayloadLightbox
           payload={lightbox.payload}

@@ -4,7 +4,12 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { buildDbWorkerBundle, createMigratedSmokeDb } from '../../__tests__/dbWorkerTestUtils.js';
-import type { LogEvent, VecStatusEvent } from '../DbTransport.js';
+import {
+  DB_TRANSPORT_NOT_SENT,
+  DB_TRANSPORT_OUTCOME_UNKNOWN,
+  type LogEvent,
+  type VecStatusEvent,
+} from '../DbTransport.js';
 import { WorkerThreadTransport } from '../WorkerThreadTransport.js';
 
 describe('WorkerThreadTransport', () => {
@@ -32,7 +37,10 @@ describe('WorkerThreadTransport', () => {
     const transport = new WorkerThreadTransport({ useInlineWorker: true });
     const pending = transport.send('sleep', { ms: 1_000 });
     await transport.terminateForTest();
-    await expect(pending).rejects.toThrow(/db worker exited|terminated/i);
+    await expect(pending).rejects.toMatchObject({
+      code: DB_TRANSPORT_OUTCOME_UNKNOWN,
+      message: expect.stringMatching(/db worker exited|terminated/i),
+    });
   });
 
   it('applies bounded backpressure before posting more RPCs to the worker', async () => {
@@ -85,11 +93,26 @@ describe('WorkerThreadTransport', () => {
     });
     const active = transport.send('sleep', { ms: 1_000 });
     const queued = transport.send('query', { sql: 'SELECT 1' });
-    const activeRejection = expect(active).rejects.toThrow(/transport closed/);
-    const queuedRejection = expect(queued).rejects.toThrow(/transport closed/);
+    const activeRejection = expect(active).rejects.toMatchObject({
+      code: DB_TRANSPORT_OUTCOME_UNKNOWN,
+      message: expect.stringMatching(/transport closed/),
+    });
+    const queuedRejection = expect(queued).rejects.toMatchObject({
+      code: DB_TRANSPORT_NOT_SENT,
+      message: expect.stringMatching(/transport closed/),
+    });
 
     await expect(transport.close()).resolves.toBeUndefined();
     await Promise.all([activeRejection, queuedRejection]);
+  });
+
+  it('marks requests rejected before dispatch as definitely not sent', async () => {
+    const transport = new WorkerThreadTransport({ useInlineWorker: true });
+    await transport.close();
+
+    await expect(transport.send('query', { sql: 'SELECT 1' })).rejects.toMatchObject({
+      code: DB_TRANSPORT_NOT_SENT,
+    });
   });
 
   it('transfers ArrayBuffer ownership through postMessage transferList', async () => {
@@ -169,6 +192,29 @@ describe('WorkerThreadTransport', () => {
           50,
         ],
       });
+      await transport.send('exec', {
+        sql: `INSERT INTO messages (
+          id, client_id, session_id, role, content, agent_meta, agent_kind, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          'assistant',
+          'assistant-client',
+          'src',
+          'assistant',
+          'reply',
+          JSON.stringify({
+            turnCompleted: true,
+            nativeForkAnchor: {
+              agentKind: 'codex',
+              sdkSessionId: 'source-thread',
+              kind: 'turn',
+              id: 'turn-1',
+            },
+          }),
+          'codex',
+          75,
+        ],
+      });
 
       await transport.send('tx', {
         name: 'fork.session',
@@ -202,8 +248,12 @@ describe('WorkerThreadTransport', () => {
             updatedAt: 1,
           },
           uuidMap: [],
+          nativeForkAnchorSessionMap: [['source-thread', 'child-thread']],
           detachAgentSwitchSessions: true,
-          newMessageIds: [{ id: 'forked-switch', clientId: 'forked-switch-client' }],
+          newMessageIds: [
+            { id: 'forked-switch', clientId: 'forked-switch-client' },
+            { id: 'forked-assistant', clientId: 'forked-assistant-client' },
+          ],
         },
       });
 
@@ -219,6 +269,19 @@ describe('WorkerThreadTransport', () => {
       });
       expect(JSON.parse(copiedSwitch.content)).toMatchObject({
         fromSdkSessionId: null,
+      });
+      const copiedAssistant = await transport.send<{ agent_meta: string }>('queryOne', {
+        sql: 'SELECT agent_meta FROM messages WHERE id = ?',
+        params: ['forked-assistant'],
+      });
+      expect(JSON.parse(copiedAssistant.agent_meta)).toEqual({
+        turnCompleted: true,
+        nativeForkAnchor: {
+          agentKind: 'codex',
+          sdkSessionId: 'child-thread',
+          kind: 'turn',
+          id: 'turn-1',
+        },
       });
     } finally {
       await transport.close();

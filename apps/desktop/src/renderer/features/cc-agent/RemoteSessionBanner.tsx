@@ -18,10 +18,11 @@
  */
 
 import { useTranslation } from 'react-i18next';
+import { useEffect, useState } from 'react';
 import { RotateCw, Square } from 'lucide-react';
 
 interface Props {
-  status: 'reconnecting' | 'host-offline' | 'degraded' | 'suspect-stall';
+  status: 'reconnecting' | 'host-offline' | 'degraded' | 'suspect-stall' | 'syncing' | 'recovered';
   /**
    * 本机到 relay 的连接问题(鉴权失效/被顶号/超限/版本不符)。仅 reconnecting 态消费:
    * 有明确原因时把笼统的「重连中」替换成具体原因文案,避免无限重连横幅无法行动。
@@ -34,6 +35,13 @@ interface Props {
 
 export function RemoteSessionBanner({ status, issue, onResync, onFinalize }: Props) {
   const { t } = useTranslation();
+  const [hideRecovered, setHideRecovered] = useState(false);
+  useEffect(() => {
+    setHideRecovered(false);
+    if (status !== 'recovered') return;
+    const timer = setTimeout(() => setHideRecovered(true), 2_000);
+    return () => clearTimeout(timer);
+  }, [status]);
   const activeIssue = status === 'reconnecting' ? (issue ?? null) : null;
   const dotColor =
     status === 'host-offline' || activeIssue
@@ -47,10 +55,16 @@ export function RemoteSessionBanner({ status, issue, onResync, onFinalize }: Pro
         ? t('ccAgent.remoteSession.hostOffline')
         : status === 'degraded'
           ? t('ccAgent.remoteSession.degraded')
-          : t('ccAgent.remoteSession.suspectStall');
+          : status === 'syncing'
+            ? t('ccAgent.remoteSession.syncing')
+            : status === 'recovered'
+              ? t('ccAgent.remoteSession.recovered')
+              : t('ccAgent.remoteSession.suspectStall');
   const pulse =
     !activeIssue &&
-    (status === 'reconnecting' || status === 'degraded' || status === 'suspect-stall');
+    (status === 'reconnecting' || status === 'degraded' || status === 'suspect-stall' || status === 'syncing');
+
+  if (status === 'recovered' && hideRecovered) return null;
 
   return (
     <div className="flex select-none items-center gap-2 border-b border-[var(--border-default)] bg-[var(--surface-chip)] px-4 py-1.5">
@@ -63,12 +77,12 @@ export function RemoteSessionBanner({ status, issue, onResync, onFinalize }: Pro
         style={{ backgroundColor: dotColor }}
         aria-hidden
       />
-      <span className="flex-1 truncate text-[12px] text-[var(--text-secondary)]">{label}</span>
+      <span className="flex-1 truncate text-12 text-[var(--text-secondary)]">{label}</span>
       {status === 'suspect-stall' && onFinalize && (
         <button
           type="button"
           onClick={onFinalize}
-          className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[12px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+          className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-12 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         >
           <Square size={12} />
           {t('ccAgent.remoteSession.finalizeStuck')}
@@ -78,7 +92,7 @@ export function RemoteSessionBanner({ status, issue, onResync, onFinalize }: Pro
         <button
           type="button"
           onClick={onResync}
-          className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[12px] text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+          className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-12 text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
         >
           <RotateCw size={12} />
           {t('ccAgent.remoteSession.resync')}

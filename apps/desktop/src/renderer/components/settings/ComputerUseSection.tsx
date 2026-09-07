@@ -35,6 +35,7 @@ import screenRecordingPermissionIcon from '@/assets/system-settings/screen-recor
 import { toast } from '@/lib/toast';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
+import { useOptionalConfirmDialog } from '@/components/ui/confirm-dialog-provider';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,7 +44,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { createLogger } from '@/lib/logger';
 import { BrowserBackendSubsection } from './BrowserBackendSubsection';
-import type { BrowserBackendHealth } from '../../../shared/browserBackend';
+import { BrowserRealProfileSubsection } from './BrowserRealProfileSubsection';
+import {
+  REAL_PROFILE_READ_DENIED,
+  type BrowserBackendHealth,
+} from '../../../shared/browserBackend';
+import {
+  browserOpenForLoginErrorCode,
+  browserOpenForLoginToastKey,
+} from './browserOpenForLoginError';
 import {
   androidDeviceLabel,
   androidStatusFallback,
@@ -56,6 +65,10 @@ import {
   isComputerPermissionReady,
   shouldStartComputerPermissionGuide,
 } from './computerPermissionFlow';
+import {
+  confirmEnableRealProfile,
+  guideFullDiskAccessAfterReadDenied,
+} from './realProfilePermissionGuide';
 
 const log = createLogger('ComputerUseSection');
 
@@ -410,6 +423,13 @@ export function ComputerUseSection({
   const [browserBackendPending, setBrowserBackendPending] = useState(false);
   const [browserBackendRecovering, setBrowserBackendRecovering] = useState(false);
   const [browserBackendHealth, setBrowserBackendHealth] = useState<BrowserBackendHealth | null>(null);
+  const [useRealProfile, setUseRealProfile] = useState(false);
+  const [useRealProfilePending, setUseRealProfilePending] = useState(false);
+  const confirmDialog = useOptionalConfirmDialog();
+  // Health can include an automatic embedded-browser recovery and therefore
+  // take several seconds. Track the latest health owner so a late initial
+  // probe cannot overwrite a newer user-initiated switch or recovery result.
+  const browserBackendHealthSeqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -426,49 +446,37 @@ export function ComputerUseSection({
       });
     void window.electronAPI.maker.plugins.getState(ANDROID_PLUGIN_ID)
       .then((state) => {
-        if (!cancelled) {
-          setAndroidEnabled(state.effectiveEnabled);
-          if (state.effectiveEnabled) {
-            setAndroidPreparePending(true);
-            void window.electronAPI.maker.android.prepareAdb()
-              .then(() => {
-                if (!cancelled) {
-                  return window.electronAPI.maker.android.status()
-                    .then((status) => {
-                      if (!cancelled) setAndroidStatus(status);
-                    });
-                }
-                return undefined;
-              })
-              .catch((err) => {
-                log.warn('android.prepareAdb failed', err);
-              })
-              .finally(() => {
-                if (!cancelled) setAndroidPreparePending(false);
-              });
-          }
+        if (cancelled) return;
+        setAndroidEnabled(state.effectiveEnabled);
+        // 插件禁用时 mount 不做任何 adb 探测:status() 会跑 `adb devices -l`,
+        // 5037 上没有 server 时会顺手 fork 一个 daemon(#1806)。禁用态只展示
+        // 提示文案;探测留到用户开启开关或手动点「刷新」时进行。
+        if (!state.effectiveEnabled) {
+          setAndroidStatusPending(false);
+          return;
         }
+        setAndroidPreparePending(true);
+        void window.electronAPI.maker.android.prepareAdb()
+          .then(() => (cancelled ? undefined : window.electronAPI.maker.android.status()))
+          .then((status) => {
+            if (!cancelled && status) setAndroidStatus(status);
+          })
+          .catch((err) => {
+            // 这个 catch 同时兜 prepareAdb 与后续 status 的失败,文案别写死单边。
+            log.warn('android adb probe (prepareAdb/status) failed', err);
+            if (!cancelled) setAndroidStatus(androidStatusFallback(err));
+          })
+          .finally(() => {
+            if (!cancelled) {
+              setAndroidPreparePending(false);
+              setAndroidStatusPending(false);
+            }
+          });
       })
       .catch((err) => {
         log.warn('plugins.getState(android) failed', err);
         if (!cancelled) {
           setAndroidEnabled(false);
-        }
-      });
-    void window.electronAPI.maker.android.status()
-      .then((status) => {
-        if (!cancelled) {
-          setAndroidStatus(status);
-        }
-      })
-      .catch((err) => {
-        log.warn('android.status failed', err);
-        if (!cancelled) {
-          setAndroidStatus(androidStatusFallback(err));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
           setAndroidStatusPending(false);
         }
       });
@@ -492,9 +500,24 @@ export function ComputerUseSection({
 
   useEffect(() => {
     let cancelled = false;
+    const backendHealthSeq = ++browserBackendHealthSeqRef.current;
+    // Start the slow health/recovery path alongside the base reads, but do not
+    // include it in their render gate. The Automation cards are useful while
+    // this result is pending and BrowserBackendSubsection already supports a
+    // null health state.
+    const backendHealthPromise = (async () => {
+      try {
+        return {
+          health: await (window.electronAPI.browserBackend?.getHealth?.() ?? null),
+          error: null,
+        };
+      } catch (error) {
+        log.warn('browserBackend.getHealth failed', error);
+        return { health: null, error };
+      }
+    })();
     void (async () => {
-      let backendHealthError: unknown;
-      const [browserState, computerState, avail, computer, backendState, backendHealth] = await Promise.all([
+      const [browserState, computerState, avail, computer, backendState] = await Promise.all([
         // `browser` is hidden from plugins.list() (HOSTED_ELSEWHERE), so read its
         // enable state directly by id — list().find() would always be undefined
         // and the toggle would wrongly reset to enabled on every remount.
@@ -535,11 +558,6 @@ export function ComputerUseSection({
           log.warn('browserBackend.getState failed', err);
           return null;
         }) ?? Promise.resolve(null),
-        window.electronAPI.browserBackend?.getHealth?.().catch((err) => {
-          backendHealthError = err;
-          log.warn('browserBackend.getHealth failed', err);
-          return null;
-        }) ?? Promise.resolve(null),
       ]);
       if (cancelled) return;
       // Browser keeps the builtin default-on behavior. Direct computer control
@@ -555,6 +573,9 @@ export function ComputerUseSection({
       // 让卡片整张瘫成内置态强。
       const activeBackend = backendState?.active ?? 'external';
       setBrowserBackendKind(activeBackend);
+      setUseRealProfile(backendState?.useRealProfile === true);
+      const { health: backendHealth, error: backendHealthError } = await backendHealthPromise;
+      if (cancelled || browserBackendHealthSeqRef.current !== backendHealthSeq) return;
       setBrowserBackendHealth(
         backendHealth?.active === activeBackend
           ? backendHealth
@@ -581,11 +602,17 @@ export function ComputerUseSection({
         // main 返回 active 是权威 — 万一同一次 swap 失败 router 拒了我们 fallback
         // 到 main 端的真实值。
         setBrowserBackendKind(res.active);
+        const backendHealthSeq = ++browserBackendHealthSeqRef.current;
         try {
-          setBrowserBackendHealth(await window.electronAPI.browserBackend.getHealth());
+          const health = await window.electronAPI.browserBackend.getHealth();
+          if (browserBackendHealthSeqRef.current === backendHealthSeq) {
+            setBrowserBackendHealth(health);
+          }
         } catch (healthErr) {
           log.warn('browserBackend.getHealth after setKind failed', healthErr);
-          setBrowserBackendHealth(browserBackendHealthFallback(res.active));
+          if (browserBackendHealthSeqRef.current === backendHealthSeq) {
+            setBrowserBackendHealth(browserBackendHealthFallback(res.active));
+          }
         }
       } catch (err) {
         log.error('browserBackend.setKind failed', err);
@@ -598,11 +625,55 @@ export function ComputerUseSection({
     [browserBackendKind, browserBackendPending, t],
   );
 
+  const handleToggleRealProfile = useCallback(
+    async (next: boolean) => {
+      if (useRealProfilePending) return;
+      if (next) {
+        const confirmed = await confirmEnableRealProfile({
+          platform: window.electronAPI.platform,
+          t,
+          confirm: confirmDialog?.confirm,
+          openExternal: window.electronAPI.openExternal,
+          onOpenSettingsFailed: (result) => {
+            log.warn('open Full Disk Access settings failed', result);
+          },
+          hasDiskAccess: async () => {
+            try {
+              const result = await window.electronAPI.browserBackend.probeSourceRead?.();
+              return result?.readable === true;
+            } catch (error) {
+              log.warn('browserBackend.probeSourceRead failed', error);
+              return false;
+            }
+          },
+        });
+        if (!confirmed) return;
+      }
+      setUseRealProfilePending(true);
+      try {
+        const res = await window.electronAPI.browserBackend.setUseRealProfile(next);
+        setUseRealProfile(res.enabled);
+        toast.success(
+          res.enabled
+            ? t('settings.computerUse.realProfile.toast.enabled')
+            : t('settings.computerUse.realProfile.toast.disabled'),
+        );
+      } catch (err) {
+        log.error('browserBackend.setUseRealProfile failed', err);
+        toast.error(t('settings.computerUse.realProfile.toast.failed'));
+      } finally {
+        setUseRealProfilePending(false);
+      }
+    },
+    [confirmDialog, t, useRealProfilePending],
+  );
+
   const handleRecoverBrowserBackend = useCallback(async () => {
     if (browserBackendPending || browserBackendRecovering) return;
     setBrowserBackendRecovering(true);
     try {
       const result = await window.electronAPI.browserBackend.recover();
+      browserBackendHealthSeqRef.current += 1;
       setBrowserBackendKind(result.health.active);
       setBrowserBackendHealth(result.health);
       if (result.ok) {
@@ -612,6 +683,7 @@ export function ComputerUseSection({
       }
     } catch (err) {
       log.error('browserBackend.recover failed', err);
+      browserBackendHealthSeqRef.current += 1;
       setBrowserBackendHealth(browserBackendHealthFallback('rsb-webview'));
       toast.error(t('settings.computerUse.browserBackend.health.recoverFailed'));
     } finally {
@@ -800,10 +872,13 @@ export function ComputerUseSection({
 
   const handleToggleBrowser = useCallback(
     async (next: boolean) => {
-      if (!workingDir) return;
       setTogglePending(true);
       try {
-        await window.electronAPI.maker.plugins.setProjectEnabled(workingDir, BROWSER_PLUGIN_ID, next);
+        if (workingDir) {
+          await window.electronAPI.maker.plugins.setProjectEnabled(workingDir, BROWSER_PLUGIN_ID, next);
+        } else {
+          await window.electronAPI.maker.plugins.setEnabled(BROWSER_PLUGIN_ID, next);
+        }
         setBrowserEnabled(next);
         toast.success(
           next
@@ -811,7 +886,7 @@ export function ComputerUseSection({
             : t('settings.computerUse.browser.toast.disabled'),
         );
       } catch (err) {
-        log.warn('setProjectEnabled(browser) failed', err);
+        log.warn('set browser plugin enabled failed', err);
         toast.error(t('settings.computerUse.browser.toast.toggleFailed'));
       } finally {
         setTogglePending(false);
@@ -903,6 +978,10 @@ export function ComputerUseSection({
           setAndroidPreparePending(true);
           await window.electronAPI.maker.android.prepareAdb();
           await handleRefreshAndroidStatus(false);
+        } else {
+          // 关闭时清掉旧探测结果:状态区回到禁用提示,设备选择入口一并禁用,
+          // 不再展示已过时的就绪/设备状态(#1829 review)。
+          setAndroidStatus(null);
         }
         toast.success(
           next
@@ -1041,9 +1120,31 @@ export function ComputerUseSection({
       toast.success(t('settings.computerUse.browser.toast.openedForLogin'));
     } catch (err) {
       log.warn('browser.openForLogin failed', err);
-      toast.error(t('settings.computerUse.browser.toast.openForLoginFailed'));
+      const errorCode = browserOpenForLoginErrorCode(err);
+      if (errorCode === REAL_PROFILE_READ_DENIED) {
+        if (!confirmDialog) {
+          toast.error(t('settings.computerUse.realProfile.readDeniedDescription'));
+        }
+        await guideFullDiskAccessAfterReadDenied({
+          platform: window.electronAPI.platform,
+          t,
+          confirm: confirmDialog?.confirm,
+          openExternal: window.electronAPI.openExternal,
+          onOpenSettingsFailed: (result) => {
+            log.warn('open Full Disk Access settings failed', result);
+          },
+        });
+        return;
+      }
+      toast.error(
+        t(
+          errorCode
+            ? browserOpenForLoginToastKey(errorCode)
+            : 'settings.computerUse.browser.toast.openForLoginFailed',
+        ),
+      );
     }
-  }, [t]);
+  }, [confirmDialog, t]);
 
   const handleOpenComputerPermission = useCallback(
     async (url: string, granted: boolean) => {
@@ -1194,7 +1295,12 @@ export function ComputerUseSection({
     configuredDefaultAndroidDevice
     && !androidDevices.some((device) => device.device_serial === configuredDefaultAndroidDevice),
   );
-  const androidDeviceStatusText = describeAndroidDeviceStatus(androidStatus, t);
+  // 禁用且尚无任何探测结果时显示禁用提示,避免落在 describeAndroidDeviceStatus
+  // 的「正在检查…」上(禁用态 mount 不探测,#1806)。用户手动「刷新」拿到结果后
+  // 仍按真实 status 展示。
+  const androidDeviceStatusText = androidEnabled === false && !androidStatus
+    ? t('settings.computerUse.android.status.disabled')
+    : describeAndroidDeviceStatus(androidStatus, t);
   const androidConnectionGuideKind = getAndroidConnectionGuideKind(androidStatus);
   const androidAdbSource = androidStatus?.adb_path_source ?? androidStatus?.adb_preparation?.source ?? null;
   const androidAdbSourceText = androidPreparePending
@@ -1256,7 +1362,7 @@ export function ComputerUseSection({
           </div>
           <Switch
             checked={browserEnabled}
-            disabled={togglePending || !workingDir}
+            disabled={togglePending}
             onCheckedChange={handleToggleBrowser}
             aria-label={t('settings.computerUse.browser.toggleAria')}
           />
@@ -1274,6 +1380,14 @@ export function ComputerUseSection({
             onRecover={() => void handleRecoverBrowserBackend()}
           />
         ) : null}
+        {browserBackendKind !== null ? (
+          <BrowserRealProfileSubsection
+            enabled={useRealProfile}
+            pending={useRealProfilePending}
+            available={browserBackendKind === 'external'}
+            onToggle={(next) => void handleToggleRealProfile(next)}
+          />
+        ) : null}
         {/* 只在 backend === 'external' 时展示 Chrome 探测 + 登录入口。内置 webview
             backend 用 Electron 自带 Chromium,这些 UI 对它都没有意义。 */}
         {browserBackendKind === 'external' ? (
@@ -1289,7 +1403,6 @@ export function ComputerUseSection({
               <button
                 type="button"
                 onClick={handleOpenForLogin}
-                disabled={!browserEnabled}
                 className={ACTION_BUTTON_CLASS}
               >
                 <LogIn size={12} className="shrink-0" />
@@ -1311,9 +1424,7 @@ export function ComputerUseSection({
         </p>
       ) : null}
       <p className="text-12 leading-[1.5] text-[var(--settings-section-desc)]">
-        {workingDir
-          ? t('settings.computerUse.browser.toggleHint')
-          : t('settings.computerUse.browser.noProjectHint')}
+        {t('settings.computerUse.browser.toggleHint')}
       </p>
 
       <div aria-hidden="true" className="h-px bg-[var(--settings-theme-card-border)]" />

@@ -32,6 +32,7 @@ export {
   recycleWorktreeForRemovedSession,
   reconcileWorktreesForDeletedSessions,
 } from './sessionRemovalRecycle';
+export { reconcilePendingSafeDirectoryCleanups } from './WorktreeManager';
 export {
   getWorktreeRestoreStatus,
   restoreMissingManagedWorktreeForSession,
@@ -97,9 +98,9 @@ export function registerWorktreeIpc(ipcMain: IpcMain = ipcMainType): void {
     }
   });
 
-  ipcMain.handle('worktree:suggest-name', (_e, req: SuggestNameReq) =>
-    WorktreeManager.suggestName(req.baseRepo),
-  );
+  ipcMain.handle('worktree:suggest-name', async (_e, req: SuggestNameReq) => ({
+    name: await WorktreeManager.suggestName(req.baseRepo),
+  }));
 
   ipcMain.handle('worktree:list-branches', (_e, req: ListBranchesReq) =>
     WorktreeManager.listBranches(req.baseRepo),

@@ -95,6 +95,8 @@ export type ModelDiscoveryFailureState = Partial<
 /** 供应商 + 连接状态。 */
 export interface ProviderView extends Provider {
   connected: boolean;
+  /** Ready media execution channels, independent of chat authorization. Absent on older hosts. */
+  availableMediaModelIds?: string[];
   /** Non-secret presentation metadata resolved before routing details cross device-link. */
   logoKind?: ProviderLogoKind;
   /** 动态清单发现的最近一次失败（已剥掉 detail）；成功或从未失败时缺席。 */
@@ -154,7 +156,7 @@ export function buildRegistry(
     // 原引用透传零分配 —— PR #744 review)。前缀误命中(如 'a:' 命中 'a:b:model')只
     // 多做一次无害映射,不影响正确性。
     let models = p.models;
-    let mediaOverrides: Pick<Provider, 'imageModels' | 'videoModels'> = {};
+    let mediaOverrides: Pick<Provider, 'imageModels' | 'videoModels' | 'embeddingModels'> = {};
     if (disabledKeys.length > 0 && disabledKeys.some((k) => k.startsWith(`${p.id}:`))) {
       const mapped: Provider['models'] = {};
       for (const agent of Object.keys(p.models) as AgentKind[]) {
@@ -163,13 +165,17 @@ export function buildRegistry(
         );
       }
       models = mapped;
-      // 专属媒体清单(imageModels/videoModels,不挂 agent)同样烘焙停用标志:
-      // 设置页据此渲染/切换只经媒体清单下发的图像、视频型号(PR #744 review)。
+      // 专属媒体清单(imageModels/videoModels/embeddingModels,不挂 agent)同样烘焙
+      // 停用标志:设置页据此渲染/切换只经这些清单下发的图像、视频、向量型号
+      // (PR #744 review;向量于 PR #1707 review 补入 —— 派生侧一直在读
+      // isModelDisabled,但设置页没有对应的行,等于停用轴有实现无入口,
+      // 用户没法单独拦住某个向量型号的付费调用)。
       const mapMedia = (list: NonNullable<Provider['imageModels']>) =>
         list.map((m) => (isModelDisabled(access, p.id, m.id) ? { ...m, disabled: true } : m));
       mediaOverrides = {
         ...(p.imageModels ? { imageModels: mapMedia(p.imageModels) } : {}),
         ...(p.videoModels ? { videoModels: mapMedia(p.videoModels) } : {}),
+        ...(p.embeddingModels ? { embeddingModels: mapMedia(p.embeddingModels) } : {}),
       };
     }
     return {

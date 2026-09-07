@@ -24,11 +24,12 @@
 
 import path from 'node:path';
 
-import { and, desc, eq, gt, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
 
 import { getDbClient } from '../localDb/client/current';
 import { messages, sessions } from '../localDb/schema';
 import { createLogger } from '../logger.js';
+import { detectCwd } from '../worktree/WorktreeManager.js';
 import { readGitHead, type GitHeadInfo } from './headReader.js';
 
 const log = createLogger('git-context/session-dir');
@@ -56,12 +57,15 @@ export function posixDriveToWin32(p: string, platform: NodeJS.Platform = process
 
 /** 倒序扫描的 tool-use 上限——只为找到最近一条带候选目录的;200 足够穿过连续的 Read。 */
 const SCAN_LIMIT = 200;
+/** 侧栏/composer 回溯 linked worktree 时最多翻这么多条 tool-use,避免「用过但超出 200 条窗口」丢标。 */
+const MAX_LINKED_WORKTREE_SCAN = 2000;
+const messageRowid = sql<number>`"messages"."rowid"`;
 
 /** 解析结果:目录 + 其 HEAD + 来源(决定徽标对分支的信任度)。 */
 export interface SessionGitDirResult {
   workdir: string | null;
   head: GitHeadInfo | null;
-  source: 'telemetry' | 'worktree' | 'workingDir' | null;
+  source: 'telemetry' | 'worktree' | 'workingDir' | 'remote' | null;
 }
 
 /**
@@ -71,7 +75,10 @@ export interface SessionGitDirResult {
  *   - 其它(Read / 普通 Bash / 脏 JSON / 相对路径)→ null。
  * 纯函数,不碰 IO。
  */
-export function extractDirCandidate(content: string): string | null {
+export function extractDirCandidate(
+  content: string,
+  pathPlatform: NodeJS.Platform = process.platform,
+): string | null {
   let obj: unknown;
   try {
     obj = JSON.parse(content);
@@ -92,14 +99,16 @@ export function extractDirCandidate(content: string): string | null {
   if (toolName === 'exec') {
     const cwd = (input as { cwd?: unknown }).cwd;
     if (typeof cwd === 'string' && cwd.trim() !== '' && path.isAbsolute(cwd)) {
-      return posixDriveToWin32(cwd);
+      return posixDriveToWin32(cwd, pathPlatform);
     }
   }
 
   // cc 编辑类:先归一 POSIX 盘符路径(Windows 上 cc 常发 `/e/...`)再取 dirname。
   if (EDIT_TOOL_NAMES.has(toolName)) {
     const fp = (input as { file_path?: unknown }).file_path;
-    if (typeof fp === 'string' && path.isAbsolute(fp)) return path.dirname(posixDriveToWin32(fp));
+    if (typeof fp === 'string' && path.isAbsolute(fp)) {
+      return path.dirname(posixDriveToWin32(fp, pathPlatform));
+    }
   }
   return null;
 }
@@ -110,6 +119,58 @@ export interface ResolveSessionGitDirDeps {
   recentToolUseContents: (sessionId: string) => Promise<string[]>;
   /** 读目录 HEAD(= readGitHead);非 git 目录 / 不存在返回 null。 */
   probeGitDir: (dir: string) => Promise<GitHeadInfo | null>;
+}
+
+export interface FindLiveLinkedWorktreeDeps {
+  recentToolUseContents: (sessionId: string) => Promise<string[]>;
+  /** 若 dir 在 linked worktree 内,返回该 worktree 的 repo root(`rev-parse --show-toplevel`)。 */
+  resolveLinkedWorktreeRoot: (dir: string) => Promise<string | null>;
+  probeGitDir: (dir: string) => Promise<GitHeadInfo | null>;
+}
+
+/** 按 recency 去重收集 tool-use 目录。纯函数,便于单测。 */
+export function collectUniqueTelemetryDirs(
+  contents: string[],
+  pathPlatform: NodeJS.Platform = process.platform,
+): string[] {
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const content of contents) {
+    const candidate = extractDirCandidate(content, pathPlatform);
+    if (!candidate) continue;
+    let resolved: string;
+    try {
+      resolved = path.resolve(candidate);
+    } catch {
+      continue;
+    }
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    dirs.push(resolved);
+  }
+  return dirs;
+}
+
+/**
+ * 侧栏 worktree 徽标专用:在遥测目录里找**仍然活着的 linked worktree**。
+ * 与 resolveSessionGitDir 不同——后者只看最近一次 git 目录、删了不往回翻(防主仓冒充)。
+ * 这里要的是「任务里用过、现在还在」:跳过主 checkout,继续看更早的候选,直到目录没了。
+ */
+export async function findLiveLinkedWorktree(
+  sessionId: string,
+  deps: FindLiveLinkedWorktreeDeps,
+): Promise<{ workdir: string; branch: string | null } | null> {
+  const contents = await deps.recentToolUseContents(sessionId);
+  for (const dir of collectUniqueTelemetryDirs(contents)) {
+    const root = await deps.resolveLinkedWorktreeRoot(dir);
+    if (!root) continue;
+    const head = await deps.probeGitDir(root);
+    return {
+      workdir: root,
+      branch: head?.kind === 'branch' ? head.branch : null,
+    };
+  }
+  return null;
 }
 
 /**
@@ -160,8 +221,11 @@ export async function resolveSessionGitDir(
   return { workdir: null, head: null, source: null };
 }
 
-/** 查该 session 可见的 tool-use 消息 content,createdAt 降序、bounded(可见性同 prRefsStore)。 */
-async function queryRecentToolUseContents(sessionId: string): Promise<string[]> {
+/** 查该 session 可见的 tool-use 消息 content,createdAt+rowid 降序、bounded(可见性同 prRefsStore)。 */
+export async function queryRecentToolUseContentRows(
+  sessionId: string,
+  opts?: { limit?: number; before?: { createdAt: number; rowid: number } },
+): Promise<Array<{ content: string; createdAt: number; rowid: number }>> {
   const db = getDbClient().drizzle;
   const [sessionRow] = await db
     .select({ clearedAt: sessions.clearedAt })
@@ -169,6 +233,7 @@ async function queryRecentToolUseContents(sessionId: string): Promise<string[]> 
     .where(eq(sessions.id, sessionId))
     .limit(1);
   const clearedAt = sessionRow?.clearedAt ?? null;
+  const limit = opts?.limit ?? SCAN_LIMIT;
 
   const conds = [
     eq(messages.sessionId, sessionId),
@@ -176,14 +241,72 @@ async function queryRecentToolUseContents(sessionId: string): Promise<string[]> 
     isNull(messages.rewindAt),
   ];
   if (clearedAt !== null) conds.push(gt(messages.createdAt, clearedAt));
+  if (opts?.before) {
+    const { createdAt, rowid } = opts.before;
+    conds.push(
+      or(
+        lt(messages.createdAt, createdAt),
+        and(eq(messages.createdAt, createdAt), lt(messageRowid, rowid)),
+      )!,
+    );
+  }
 
-  const rows = await db
-    .select({ content: messages.content })
+  return db
+    .select({
+      content: messages.content,
+      createdAt: messages.createdAt,
+      rowid: messageRowid,
+    })
     .from(messages)
     .where(and(...conds))
-    .orderBy(desc(messages.createdAt))
-    .limit(SCAN_LIMIT);
+    .orderBy(desc(messages.createdAt), desc(messageRowid))
+    .limit(limit);
+}
+
+export async function queryRecentToolUseContents(sessionId: string): Promise<string[]> {
+  const rows = await queryRecentToolUseContentRows(sessionId, { limit: SCAN_LIMIT });
   return rows.map((r) => r.content);
+}
+
+async function queryLinkedWorktreeTelemetryContents(sessionId: string): Promise<string[]> {
+  const contents: string[] = [];
+  let before: { createdAt: number; rowid: number } | undefined;
+  while (contents.length < MAX_LINKED_WORKTREE_SCAN) {
+    const page = await queryRecentToolUseContentRows(sessionId, {
+      limit: SCAN_LIMIT,
+      before,
+    });
+    if (page.length === 0) break;
+    for (const row of page) contents.push(row.content);
+    const last = page[page.length - 1];
+    before = { createdAt: last.createdAt, rowid: last.rowid };
+    if (page.length < SCAN_LIMIT) break;
+  }
+  return contents;
+}
+
+/**
+ * Live wrapper used by remote probes: return only the newest telemetry-derived
+ * directory, without touching the local filesystem. The path is meaningful on
+ * the SSH host (or on the controlled device), so the caller must probe it there.
+ */
+export async function getSessionGitTelemetryCandidateLive(
+  sessionId: string,
+  pathPlatform: NodeJS.Platform = process.platform,
+): Promise<string | null> {
+  try {
+    const contents = await queryRecentToolUseContents(sessionId);
+    for (const content of contents) {
+      const candidate = extractDirCandidate(content, pathPlatform);
+      if (candidate) return candidate;
+    }
+  } catch (err) {
+    log.warn('query remote git telemetry failed (no telemetry)', {
+      sessionId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return null;
 }
 
 /**
@@ -209,4 +332,37 @@ export async function resolveSessionGitDirLive(input: {
     },
     probeGitDir: (dir) => readGitHead(dir),
   });
+}
+
+/** 本机 Desktop 侧栏 worktree 徽标:遥测里仍活着的 linked worktree。永不抛错。 */
+export async function findLiveLinkedWorktreeLive(
+  sessionId: string,
+): Promise<{ workdir: string; branch: string | null } | null> {
+  try {
+    return await findLiveLinkedWorktree(sessionId, {
+      recentToolUseContents: async (sid) => {
+        try {
+          return await queryLinkedWorktreeTelemetryContents(sid);
+        } catch {
+          return [];
+        }
+      },
+      resolveLinkedWorktreeRoot: async (dir) => {
+        try {
+          const detected = await detectCwd(dir);
+          if (!detected.isInsideWorktree) return null;
+          return detected.repoRoot ?? path.resolve(dir);
+        } catch {
+          return null;
+        }
+      },
+      probeGitDir: (dir) => readGitHead(dir),
+    });
+  } catch (err) {
+    log.warn('find live linked worktree failed', {
+      sessionId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }

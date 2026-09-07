@@ -31,7 +31,8 @@ const log = createLogger('desktop-commands');
  * 执行结果(stdout / stderr / exitCode / elapsedMs / cmdLine / cwd / timedOut)。
  */
 export interface DesktopCommandTriggeredPayload {
-  command: 'help' | 'clear' | 'cmd' | 'issue' | 'jump-session' | 'goal' | 'workflows' | 'learn';
+  command:
+    'help' | 'clear' | 'cmd' | 'issue' | 'review' | 'jump-session' | 'goal' | 'workflows' | 'learn';
   sessionId?: string;
   workingDir?: string;
   args?: string;
@@ -443,6 +444,19 @@ export function registerBuiltinDesktopCommands(
   });
 
   registry.register({
+    name: 'review',
+    description:
+      'Review the current task in a fresh, memory-free, read-only reviewer task. Supports code changes, files, documents, and images. Usage: /review [focus or path]',
+    execute: () => {
+      // ChatInput invokes maker:start-review directly so its exact attachment
+      // snapshot crosses the durable Main boundary before the view can unmount.
+      // Refuse any unbound registry invocation instead of silently broadcasting
+      // an event that may have no mounted consumer.
+      throw new Error('/review must be started from a task composer');
+    },
+  });
+
+  registry.register({
     name: 'goal',
     description:
       'Set an autonomous goal — the agent keeps working across turns until it is met, blocked, or the budget runs out. Usage: /goal <condition>. Clear with /goal clear.',
@@ -527,12 +541,13 @@ export function registerBuiltinDesktopCommands(
       }
       // `/learn hub:<slug> [补充要求]` —— skill hub「学习此技能」预填的形态,
       // 用户可在输入框改要求、换模型后再发。slug 规则与市场一致([a-z0-9-])。
-      const hubMatch = /^hub:([a-z0-9][a-z0-9-]*)\s*/.exec(arg);
+      const hubMatch = /^hub:(?:(market|team):)?([a-z0-9][a-z0-9-]*)\s*/.exec(arg);
       const req = hubMatch
         ? {
             input: arg.slice(hubMatch[0].length).trim(),
             sourceKind: 'hub' as const,
-            hubSlug: hubMatch[1],
+            hubSlug: hubMatch[2],
+            ...(hubMatch[1] ? { hubCatalogScope: hubMatch[1] as 'market' | 'team' } : {}),
             ...(ctx.sessionId ? { originSessionId: ctx.sessionId } : {}),
           }
         : {

@@ -1,14 +1,21 @@
 import {
   CodexResumePreparationBlockedError,
+  MAIN_OWNED_SEND_CONTEXT,
   type AgentKind,
   type SessionSendOptions,
   type SessionSendResult,
   type UserMessage,
 } from '@cindy/maker-core';
 import { CODEX_RESUME_NOT_READY_WIRE_MESSAGE } from '@cindy/maker-shared/agent-input-projection';
+import type { AgentInputQueuedMessage } from '../../../shared/agentInputQueue';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createMakerSendTransaction,
+  restoreTrustedDesktopQueuedOrigin,
+  stampTrustedDeviceLinkQueuedOrigin,
+  stampTrustedDesktopQueuedOrigin,
+  TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT,
+  TRUSTED_DESKTOP_QUEUE_ORIGIN,
   type MakerSendTransactionDeps,
   type MakerSendTransactionSession,
 } from '../makerSendTransaction';
@@ -79,6 +86,17 @@ function createDeps(overrides: Partial<MakerSendTransactionDeps> = {}) {
 }
 
 describe('maker SEND transaction', () => {
+  it('stamps device-link provenance at the enqueue boundary and rejects forged local values', () => {
+    const item = { clientId: 'input-1', text: 'hello' } as unknown as AgentInputQueuedMessage;
+    expect(stampTrustedDeviceLinkQueuedOrigin(item, true)).toMatchObject({
+      fromDeviceLinkClient: true,
+    });
+    expect(stampTrustedDeviceLinkQueuedOrigin({
+      ...item,
+      fromDeviceLinkClient: true,
+    }, false)).not.toHaveProperty('fromDeviceLinkClient');
+  });
+
   it('rejects invalid sessionId before touching transaction dependencies', async () => {
     const { deps } = createDeps();
     const transaction = createMakerSendTransaction(deps);
@@ -109,8 +127,17 @@ describe('maker SEND transaction', () => {
           persistUserMessage: {
             clientId: 'client-1',
             content: 'hello',
+            agentFacingWireContent: { type: 'user', content: 'hello' },
             sdkSessionId: 'sdk-1',
             delivery: 'turn',
+            origin: {
+              kind: 'desktop',
+              [TRUSTED_DESKTOP_QUEUE_ORIGIN]: {
+                clientId: 'client-1',
+                persistedContent: 'hello',
+                text: 'hello',
+              },
+            },
             shouldBroadcast,
             onPersisting,
             onPersisted,
@@ -130,6 +157,10 @@ describe('maker SEND transaction', () => {
         logTitle: '现有会话',
         messageUuid: 'message-uuid',
         userName: 'Lizi',
+        [MAIN_OWNED_SEND_CONTEXT]: {
+          origin: { kind: 'desktop' },
+          rawChannelText: 'hello',
+        },
       }),
     );
     expect(onPersisting).toHaveBeenCalled();
@@ -152,6 +183,8 @@ describe('maker SEND transaction', () => {
           uuid: 'message-uuid',
           sdkSessionId: 'sdk-1',
           delivery: 'turn',
+          agentFacingWireContent: { type: 'user', content: 'hello' },
+          origin: expect.objectContaining({ kind: 'desktop' }),
         },
       },
       { shouldBroadcast },
@@ -160,6 +193,226 @@ describe('maker SEND transaction', () => {
     expect(deps.dispatchUserPromptPreview).toHaveBeenCalledWith('session-1', 'client-1');
     expect(deps.commitUserPromptPreview).toHaveBeenCalledWith('session-1', 'client-1');
     expect(deps.rollbackUserPromptPreview).not.toHaveBeenCalled();
+  });
+
+  it('restamps a trusted local queue edit for the existing Desktop command route', async () => {
+    const { deps, session } = createDeps();
+    const transaction = createMakerSendTransaction(deps);
+    const command = 'pi install npm:context-mode';
+    const edited = stampTrustedDesktopQueuedOrigin({
+      clientId: 'locally-edited-input',
+      text: command,
+      persistedContent: command,
+      files: [],
+    } as unknown as AgentInputQueuedMessage, false);
+
+    await transaction.sendToAgentAccepted('session-1', command, undefined, {
+      persistUserMessage: {
+        clientId: 'locally-edited-input',
+        content: command,
+        agentFacingWireContent: { type: 'user', content: command },
+        origin: edited.origin,
+      },
+    });
+
+    expect(vi.mocked(session.send).mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT]).toEqual({
+      origin: { kind: 'desktop' },
+      rawChannelText: command,
+    });
+    expect(stampTrustedDesktopQueuedOrigin(edited, true).origin).toBeUndefined();
+    expect(stampTrustedDesktopQueuedOrigin({
+      ...edited,
+      files: [{} as never],
+    }, false).origin).toBeUndefined();
+  });
+
+  it('rebuilds the existing Desktop command route from a JSON crash snapshot', async () => {
+    const { deps, session } = createDeps();
+    const transaction = createMakerSendTransaction(deps);
+    const command = 'pi update npm:context-mode';
+    const accepted = stampTrustedDesktopQueuedOrigin({
+      clientId: 'restored-command',
+      text: command,
+      persistedContent: command,
+      files: [],
+    } as unknown as AgentInputQueuedMessage, false);
+    const serialized = JSON.parse(JSON.stringify(accepted)) as AgentInputQueuedMessage;
+    expect((serialized as unknown as Record<string, unknown>)[TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT])
+      .toEqual(expect.objectContaining({ version: 1, clientId: 'restored-command', text: command }));
+    const restored = restoreTrustedDesktopQueuedOrigin(serialized);
+
+    await transaction.sendToAgentAccepted('session-1', command, undefined, {
+      persistUserMessage: {
+        clientId: restored.clientId,
+        content: restored.persistedContent,
+        agentFacingWireContent: { type: 'user', content: restored.text },
+        origin: restored.origin,
+      },
+    });
+
+    expect(vi.mocked(session.send).mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT]).toEqual({
+      origin: { kind: 'desktop' },
+      rawChannelText: command,
+    });
+  });
+
+  it('strips forged or ineligible durable Desktop command authorization', () => {
+    const command = 'pi remove npm:context-mode';
+    const forged = {
+      clientId: 'forged-command',
+      text: command,
+      persistedContent: command,
+      files: [],
+      origin: { kind: 'desktop' },
+      [TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT]: {
+        version: 1,
+        clientId: 'forged-command',
+        text: command,
+        persistedContent: command,
+      },
+    } as unknown as AgentInputQueuedMessage;
+
+    const remote = stampTrustedDesktopQueuedOrigin(forged, true);
+    expect(remote.origin).toBeUndefined();
+    expect((remote as unknown as Record<string, unknown>)[TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT])
+      .toBeUndefined();
+    const scheduler = {
+      ...forged,
+      origin: { kind: 'scheduler', scheduleId: 's', scheduleName: 'S' },
+    } as unknown as AgentInputQueuedMessage;
+    expect(stampTrustedDesktopQueuedOrigin(scheduler, false).origin).toBeUndefined();
+    expect(stampTrustedDesktopQueuedOrigin(scheduler, false, true).origin)
+      .toEqual({ kind: 'scheduler', scheduleId: 's', scheduleName: 'S' });
+    for (const ineligible of [
+      { ...forged, origin: { kind: 'scheduler', scheduleId: 's', scheduleName: 'S' } },
+      { ...forged, origin: { kind: 'session', senderSessionId: 's', displayText: command } },
+      { ...forged, files: [{}] },
+      { ...forged, fromMobileClient: true },
+      { ...forged, autoResume: true },
+    ]) {
+      const restored = restoreTrustedDesktopQueuedOrigin(ineligible as unknown as AgentInputQueuedMessage);
+      expect((restored.origin as Record<PropertyKey, unknown> | undefined)?.[TRUSTED_DESKTOP_QUEUE_ORIGIN])
+        .toBeUndefined();
+      expect((restored as unknown as Record<string, unknown>)[TRUSTED_DESKTOP_PI_COMMAND_SNAPSHOT])
+        .toBeUndefined();
+    }
+    expect(stampTrustedDesktopQueuedOrigin({ ...forged, text: 'ordinary text' } as unknown as AgentInputQueuedMessage, false).origin)
+      .toBeUndefined();
+  });
+
+  it('does not preserve Desktop authority when persisted and agent-facing text diverge', async () => {
+    const { deps, session } = createDeps();
+    const transaction = createMakerSendTransaction(deps);
+    const command = 'pi install npm:context-mode';
+    const queued = stampTrustedDesktopQueuedOrigin({
+      clientId: 'divergent-input',
+      text: command,
+      persistedContent: command,
+      files: [],
+    } as unknown as AgentInputQueuedMessage, false);
+
+    await transaction.sendToAgentAccepted('session-1', 'summarize the package', undefined, {
+      persistUserMessage: {
+        clientId: queued.clientId,
+        content: command,
+        agentFacingWireContent: { type: 'user', content: 'summarize the package' },
+        origin: queued.origin,
+      },
+    });
+
+    expect(vi.mocked(session.send).mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT])
+      .toBeUndefined();
+  });
+
+  it('does not infer Desktop authority from a forged persisted origin', async () => {
+    const { deps, session } = createDeps();
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', 'pi install npm:context-mode', undefined, {
+      persistUserMessage: {
+        clientId: 'device-link-input',
+        content: 'pi install npm:context-mode',
+        origin: { kind: 'desktop' },
+      },
+    });
+
+    expect(vi.mocked(session.send).mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT])
+      .toBeUndefined();
+  });
+
+  it('revokes Desktop authority when queued text changes after acceptance', async () => {
+    const { deps, session } = createDeps();
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', 'pi install npm:rewritten', undefined, {
+      persistUserMessage: {
+        clientId: 'rewritten-input',
+        content: 'pi install npm:rewritten',
+        origin: {
+          kind: 'desktop',
+          [TRUSTED_DESKTOP_QUEUE_ORIGIN]: {
+            clientId: 'rewritten-input',
+            persistedContent: 'inspect package options',
+            text: 'inspect package options',
+          },
+        },
+      },
+    });
+
+    expect(vi.mocked(session.send).mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT])
+      .toBeUndefined();
+  });
+
+  it('does not preserve Desktop package authority across a recovery clone identity', async () => {
+    const { deps, session } = createDeps();
+    const transaction = createMakerSendTransaction(deps);
+    const command = 'pi update npm:context-mode';
+
+    await transaction.sendToAgentAccepted('session-1', command, undefined, {
+      persistUserMessage: {
+        clientId: 'retry-clone',
+        content: command,
+        origin: {
+          kind: 'desktop',
+          [TRUSTED_DESKTOP_QUEUE_ORIGIN]: {
+            clientId: 'original-turn',
+            persistedContent: command,
+            text: command,
+          },
+        },
+      },
+    });
+
+    expect(vi.mocked(session.send).mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT])
+      .toBeUndefined();
+  });
+
+  it('does not preserve Desktop package authority across queued attachments', async () => {
+    const { deps, session } = createDeps();
+    const transaction = createMakerSendTransaction(deps);
+    const command = 'pi install npm:context-mode';
+    const persistedContent = JSON.stringify({
+      text: command,
+      images: [{ url: 'cindy-media://image' }],
+    });
+
+    await transaction.sendToAgentAccepted('session-1', command, undefined, {
+      persistUserMessage: {
+        clientId: 'attachment-command',
+        content: persistedContent,
+        origin: {
+          kind: 'desktop',
+          [TRUSTED_DESKTOP_QUEUE_ORIGIN]: {
+            clientId: 'attachment-command',
+            persistedContent,
+            text: command,
+          },
+        },
+      },
+    });
+
+    expect(vi.mocked(session.send).mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT])
+      .toBeUndefined();
   });
 
   it('links attachment messages to the accepted Pi transcript entry only for Pi attachments', async () => {
@@ -231,6 +484,8 @@ describe('maker SEND transaction', () => {
       { type: 'user', content: 'hb prompt' },
       expect.objectContaining({ origin }),
     );
+    expect(vi.mocked(session.send).mock.calls[0]?.[1]?.[MAIN_OWNED_SEND_CONTEXT])
+      .toBeUndefined();
     expect(deps.createDbMessage).toHaveBeenCalledWith(
       'session-1',
       expect.objectContaining({
@@ -308,6 +563,46 @@ describe('maker SEND transaction', () => {
     expect(
       (deps.getSession('session-1')?.send as ReturnType<typeof vi.fn>).mock.calls[0]?.[1],
     ).toEqual(expect.objectContaining({ turnAttemptToken: 7 }));
+  });
+
+  it('persists the shared recovery checkpoint for manual retries too', async () => {
+    const { deps } = createDeps();
+    const transaction = createMakerSendTransaction(deps);
+    const checkpoint = {
+      version: 1,
+      source: 'manual',
+      mode: 'checkpoint',
+      attempt: 2,
+      failedUserClientId: 'failed-1',
+      rootUserClientId: 'failed-0',
+      contextTokens: 180_000,
+      contextWindow: 200_000,
+      contextRatio: 0.9,
+      progressCount: 4,
+      createdAt: '2026-08-04T00:00:00.000Z',
+      recentProgress: [],
+    };
+
+    await transaction.sendToAgentAccepted(
+      'session-1',
+      { type: 'user', content: '[UI_ACTION_TRIGGER] continue' },
+      undefined,
+      {
+        messageUuid: 'message-uuid',
+        persistUserMessage: {
+          clientId: 'client-2',
+          content: '[UI_ACTION_TRIGGER] continue',
+          delivery: 'turn',
+          recoveryCheckpoint: checkpoint,
+        },
+      },
+    );
+
+    expect(deps.createDbMessage).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({ agentMeta: expect.objectContaining({ recoveryCheckpoint: checkpoint }) }),
+      undefined,
+    );
   });
 
   it('omits autoResume for ordinary user sends', async () => {
@@ -937,6 +1232,84 @@ describe('maker SEND transaction', () => {
     expect(lazySession.send).toHaveBeenCalled();
   });
 
+  it('restores a persisted writable parent without a filtered read-only child after restart', async () => {
+    const lazySession = createSession({ id: 'restart-session', workDir: '/repo' });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => undefined),
+      readSessionExtraDirsFromDb: vi.fn(async () => []),
+      readSessionWritableDirsFromDb: vi.fn(async () => ['/shared']),
+      bootstrapSession: vi.fn(async () => ({
+        session: lazySession,
+        didInjectOrcaInstructions: false,
+        didInjectProjectContext: false,
+      })),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await expect(transaction.sendToAgentAccepted('restart-session', 'hello', {
+      id: 'restart-session',
+      agentKind: 'codex',
+      workingDir: '/repo',
+      model: 'gpt-5.4',
+    })).resolves.toMatchObject({ accepted: true });
+
+    const bootstrapOpts = vi.mocked(deps.bootstrapSession).mock.calls[0]?.[0];
+    expect(bootstrapOpts).toMatchObject({ writableDirs: ['/shared'] });
+    expect(bootstrapOpts).not.toHaveProperty('extraDirs');
+  });
+
+  it('activates a forked Pi business session once with the latest DB route on its first send', async () => {
+    const lazySession = createSession({
+      id: 'forked-pi-session',
+      agentKind: 'pi',
+      workDir: 'D:\\forked-pi',
+    });
+    const reconcileCreateOptsWithDb = vi.fn(async (_sessionId, createOpts) => {
+      createOpts.agentKind = 'pi';
+      createOpts.model = 'gpt-5.5';
+      createOpts.providerId = 'xd';
+      createOpts.resumeSessionId = 'pi-fork-jsonl';
+    });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => undefined),
+      reconcileCreateOptsWithDb,
+      bootstrapSession: vi.fn(async () => ({
+        session: lazySession,
+        didInjectOrcaInstructions: false,
+        didInjectProjectContext: false,
+      })),
+    });
+    const transaction = createMakerSendTransaction(deps);
+    const staleCreateOpts: MakerSessionCreateOpts = {
+      id: 'forked-pi-session',
+      agentKind: 'pi',
+      workingDir: 'D:\\forked-pi',
+      model: 'chatgpt/gpt-5.5',
+      providerId: 'openai',
+      resumeSessionId: 'stale-pi-session',
+    };
+
+    await expect(
+      transaction.sendToAgentAccepted('forked-pi-session', 'first fork message', staleCreateOpts),
+    ).resolves.toMatchObject({
+      accepted: true,
+      outcome: { kind: 'session-dispatch', dispatched: true },
+    });
+
+    expect(reconcileCreateOptsWithDb).toHaveBeenCalledOnce();
+    expect(deps.bootstrapSession).toHaveBeenCalledOnce();
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'forked-pi-session',
+      agentKind: 'pi',
+      model: 'gpt-5.5',
+      providerId: 'xd',
+      resumeSessionId: 'pi-fork-jsonl',
+    }));
+    expect(deps.broadcastSessionCreated).toHaveBeenCalledOnce();
+    expect(lazySession.send).toHaveBeenCalledOnce();
+    expect(lazySession.send).toHaveBeenCalledWith('first fork message', expect.anything());
+  });
+
   it('returns lazy-create failure without dispatching when bootstrap fails', async () => {
     const { deps } = createDeps({
       getSession: vi.fn(() => undefined),
@@ -1062,6 +1435,227 @@ describe('maker SEND transaction', () => {
     expect(deps.markOrcaRoleIfNeeded).toHaveBeenCalledWith('orca-session', 'lead');
     expect(oldSession.send).not.toHaveBeenCalled();
     expect(newSession.send).toHaveBeenCalled();
+  });
+
+  it('reconciles createOpts against DB before closing the old runtime on active Orca rehydrate (#2882)', async () => {
+    const oldSession = createSession({ id: 'orca-session', workDir: 'C:\\repo' });
+    const newSession = createSession({ id: 'orca-session', workDir: 'C:\\repo' });
+    const reconcileCreateOptsWithDb = vi.fn(async (_sessionId: string, co: MakerSessionCreateOpts) => {
+      co.resumeSessionId = 'db-sdk-session-id';
+    });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => oldSession),
+      isOrcaMcpHydrated: vi.fn(() => false),
+      synthesizeOrcaVendorOptionsFromDb: vi.fn(async () => true),
+      reconcileCreateOptsWithDb,
+      bootstrapSession: vi.fn(async () => ({
+        session: newSession,
+        didInjectOrcaInstructions: true,
+        didInjectProjectContext: false,
+      })),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await expect(
+      transaction.sendToAgentAccepted('orca-session', 'hello', {
+        id: 'orca-session',
+        agentKind: 'pi',
+        workingDir: 'C:\\repo',
+        model: 'k3',
+        // caller 快照携带陈旧 resume:DB 权威值必须胜出,而不是仅在缺省时补值。
+        resumeSessionId: 'stale-caller-resume',
+      }),
+    ).resolves.toMatchObject({ accepted: true });
+
+    expect(reconcileCreateOptsWithDb).toHaveBeenCalledOnce();
+    // 对账必须发生在 closeSession 之前:DB 读失败时旧 runtime 不能已被关闭。
+    expect(reconcileCreateOptsWithDb.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.closeSession).mock.invocationCallOrder[0]!,
+    );
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(
+      expect.objectContaining({ resumeSessionId: 'db-sdk-session-id' }),
+    );
+    expect(newSession.send).toHaveBeenCalled();
+  });
+
+  it('drops a DB sdk id for a fresh remote Codex Lead whose old runtime accepted no turn', async () => {
+    const oldSession = createSession({
+      id: 'orca-session',
+      workDir: 'C:\\repo',
+      codexThreadMayHaveRollout: false,
+    });
+    const newSession = createSession({ id: 'orca-session', workDir: 'C:\\repo' });
+    const reconcileCreateOptsWithDb = vi.fn(async (_sessionId: string, co: MakerSessionCreateOpts) => {
+      co.resumeSessionId = 'fresh-thread-id';
+    });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => oldSession),
+      isOrcaMcpHydrated: vi.fn(() => false),
+      synthesizeOrcaVendorOptionsFromDb: vi.fn(async () => true),
+      reconcileCreateOptsWithDb,
+      bootstrapSession: vi.fn(async (opts: MakerSessionCreateOpts) => ({
+        session: newSession,
+        didInjectOrcaInstructions: true,
+        didInjectProjectContext: false,
+      })),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await expect(transaction.sendToAgentAccepted('orca-session', 'hello', {
+      id: 'orca-session',
+      agentKind: 'codex',
+      workingDir: 'C:\\repo',
+      model: 'gpt-5.4',
+      remoteHostId: null,
+      orcaRole: 'lead',
+    }, { fromDeviceLinkClient: true })).resolves.toMatchObject({ accepted: true });
+
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: undefined,
+    }));
+    expect(reconcileCreateOptsWithDb.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.closeSession).mock.invocationCallOrder[0]!,
+    );
+    expect(vi.mocked(deps.closeSession).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.bootstrapSession).mock.invocationCallOrder[0]!,
+    );
+    expect(vi.mocked(deps.bootstrapSession).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(newSession.send).mock.invocationCallOrder[0]!,
+    );
+    expect(oldSession.send).not.toHaveBeenCalled();
+    expect(newSession.send).toHaveBeenCalled();
+    expect(deps.log.info).toHaveBeenCalledWith(
+      'send: fresh remote Codex Lead rehydrate starts a new thread',
+      { evidence: 'no-provider-turn-accepted' },
+    );
+  });
+
+  type ResumePreservationScenario = {
+    fromDeviceLinkClient: boolean;
+    codexThreadMayHaveRollout?: boolean;
+    orcaRole?: 'lead' | 'worker';
+    remoteHostId: string | null;
+  };
+  const resumePreservationScenarios: Array<[string, ResumePreservationScenario]> = [
+    ['device-link Lead with true evidence', { fromDeviceLinkClient: true, codexThreadMayHaveRollout: true, orcaRole: 'lead' as const, remoteHostId: null }],
+    ['device-link Lead with unknown evidence', { fromDeviceLinkClient: true, orcaRole: 'lead' as const, remoteHostId: null }],
+    ['device-link Worker', { fromDeviceLinkClient: true, codexThreadMayHaveRollout: false, orcaRole: 'worker' as const, remoteHostId: null }],
+    ['device-link non-Orca session', { fromDeviceLinkClient: true, codexThreadMayHaveRollout: false, orcaRole: undefined, remoteHostId: null }],
+    ['local ordinary Lead', { fromDeviceLinkClient: false, codexThreadMayHaveRollout: false, orcaRole: 'lead' as const, remoteHostId: null }],
+    ['SSH historical Lead', { fromDeviceLinkClient: false, codexThreadMayHaveRollout: true, orcaRole: 'lead' as const, remoteHostId: 'ssh-host' }],
+  ];
+  it.each(resumePreservationScenarios)('preserves the DB sdk id for %s', async (_name, scenario) => {
+    const oldSession = createSession({
+      id: 'orca-session',
+      workDir: 'C:\\repo',
+      ...(scenario.remoteHostId ? { remoteHostId: scenario.remoteHostId } : {}),
+      ...(scenario.codexThreadMayHaveRollout === undefined
+        ? {}
+        : { codexThreadMayHaveRollout: scenario.codexThreadMayHaveRollout }),
+    });
+    const newSession = createSession({
+      id: 'orca-session',
+      workDir: 'C:\\repo',
+      ...(scenario.remoteHostId ? { remoteHostId: scenario.remoteHostId } : {}),
+    });
+    const reconcileCreateOptsWithDb = vi.fn(async (_sessionId: string, co: MakerSessionCreateOpts) => {
+      co.resumeSessionId = 'historical-thread-id';
+    });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => oldSession),
+      isOrcaMcpHydrated: vi.fn(() => false),
+      synthesizeOrcaVendorOptionsFromDb: vi.fn(async () => true),
+      reconcileCreateOptsWithDb,
+      bootstrapSession: vi.fn(async () => ({
+        session: newSession,
+        didInjectOrcaInstructions: true,
+        didInjectProjectContext: false,
+      })),
+    });
+    const transaction = createMakerSendTransaction(deps);
+    const createOpts: MakerSessionCreateOpts = {
+      id: 'orca-session',
+      agentKind: 'codex',
+      workingDir: 'C:\\repo',
+      model: 'gpt-5.4',
+      ...(scenario.remoteHostId ? { remoteHostId: scenario.remoteHostId } : {}),
+      ...(scenario.orcaRole ? { orcaRole: scenario.orcaRole } : {}),
+    };
+    const sendOpts = scenario.fromDeviceLinkClient ? { fromDeviceLinkClient: true } : undefined;
+
+    await expect(transaction.sendToAgentAccepted('orca-session', 'hello', createOpts, sendOpts))
+      .resolves.toMatchObject({ accepted: true });
+
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: 'historical-thread-id',
+    }));
+  });
+
+  it('keeps the DB sdk id for a remote Codex Lead whose old runtime accepted a rollout', async () => {
+    const oldSession = createSession({
+      id: 'orca-session',
+      workDir: 'C:\\repo',
+      codexThreadMayHaveRollout: true,
+    });
+    const newSession = createSession({ id: 'orca-session', workDir: 'C:\\repo' });
+    const reconcileCreateOptsWithDb = vi.fn(async (_sessionId: string, co: MakerSessionCreateOpts) => {
+      co.resumeSessionId = 'historical-thread-id';
+    });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => oldSession),
+      isOrcaMcpHydrated: vi.fn(() => false),
+      synthesizeOrcaVendorOptionsFromDb: vi.fn(async () => true),
+      reconcileCreateOptsWithDb,
+      bootstrapSession: vi.fn(async () => ({
+        session: newSession,
+        didInjectOrcaInstructions: true,
+        didInjectProjectContext: false,
+      })),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await expect(transaction.sendToAgentAccepted('orca-session', 'hello', {
+      id: 'orca-session',
+      agentKind: 'codex',
+      workingDir: 'C:\\repo',
+      model: 'gpt-5.4',
+      remoteHostId: null,
+      orcaRole: 'lead',
+    }, { fromDeviceLinkClient: true })).resolves.toMatchObject({ accepted: true });
+
+    expect(deps.bootstrapSession).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: 'historical-thread-id',
+    }));
+    expect(deps.log.info).not.toHaveBeenCalledWith(
+      'send: fresh remote Codex Lead rehydrate starts a new thread',
+      expect.anything(),
+    );
+  });
+
+  it('fails rehydrate without closing the old runtime when DB reconciliation throws (#2882)', async () => {
+    const oldSession = createSession({ id: 'orca-session', workDir: 'C:\\repo' });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => oldSession),
+      isOrcaMcpHydrated: vi.fn(() => false),
+      synthesizeOrcaVendorOptionsFromDb: vi.fn(async () => true),
+      reconcileCreateOptsWithDb: vi.fn(async () => {
+        throw new Error('db unavailable');
+      }),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await expect(
+      transaction.sendToAgentAccepted('orca-session', 'hello', {
+        id: 'orca-session',
+        agentKind: 'pi',
+        workingDir: 'C:\\repo',
+        model: 'k3',
+      }),
+    ).resolves.toMatchObject({ accepted: false, reason: 'REHYDRATE_FAILED' });
+
+    expect(deps.closeSession).not.toHaveBeenCalled();
+    expect(deps.bootstrapSession).not.toHaveBeenCalled();
+    expect(oldSession.send).not.toHaveBeenCalled();
   });
 
   it('returns rehydrate failure without sending when active Orca rehydrate fails', async () => {
@@ -1258,6 +1852,74 @@ describe('maker SEND transaction', () => {
   });
 });
 
+describe('mobile client prompt note', () => {
+  it('keeps ordinary mobile messages annotated on the wire but persists the original text', async () => {
+    const session = createSession({ agentKind: 'claude-code' });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => session),
+      isMobileClientInvoke: vi.fn(() => true),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', 'hello', undefined, {
+      persistUserMessage: { clientId: 'mobile-1', content: 'hello' },
+    });
+
+    const sent = vi.mocked(session.send).mock.calls[0]?.[0];
+    expect(sent).toEqual(expect.stringMatching(/^\[客户端说明\]/));
+    expect(sent).toEqual(expect.stringMatching(/\n\nhello$/));
+    expect(vi.mocked(deps.createDbMessage).mock.calls[0]?.[1].content).toBe('hello');
+  });
+
+  it('sends mobile Claude Code /compact commands without a prepended note', async () => {
+    const session = createSession({ agentKind: 'claude-code' });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => session),
+      isMobileClientInvoke: vi.fn(() => true),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', '/compact focus on decisions');
+
+    expect(session.send).toHaveBeenCalledWith('/compact focus on decisions', expect.anything());
+  });
+
+  it('keeps the mobile note for /compact text sent to a non-Claude agent', async () => {
+    const session = createSession({ agentKind: 'pi' });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => session),
+      isMobileClientInvoke: vi.fn(() => true),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', '/compact');
+
+    const sent = vi.mocked(session.send).mock.calls[0]?.[0];
+    expect(sent).toEqual(expect.stringMatching(/^\[客户端说明\]/));
+  });
+
+  it('applies the same command bypass to coordinator-drained mobile messages', async () => {
+    const session = createSession({ agentKind: 'claude-code' });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => session),
+      isMobileClientInvoke: vi.fn(() => false),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted(
+      'session-1',
+      { type: 'user', content: '/compact' },
+      undefined,
+      { fromMobileClient: true },
+    );
+
+    expect(session.send).toHaveBeenCalledWith(
+      { type: 'user', content: '/compact' },
+      expect.anything(),
+    );
+  });
+});
+
 describe('session-agent-switch handoff injection', () => {
   it('pending 命中时 wire payload 前置交接段,落库内容保持用户原文,accepted 后 consume', async () => {
     const consumePendingHandoff = vi.fn();
@@ -1268,7 +1930,7 @@ describe('session-agent-switch handoff injection', () => {
     const transaction = createMakerSendTransaction(deps);
 
     await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '新消息' }, undefined, {
-      persistUserMessage: { clientId: 'client-1', content: '新消息' },
+      persistUserMessage: { clientId: 'client-1', content: '{"text":"新消息","images":[],"files":[]}' },
     });
 
     // wire:前缀注入
@@ -1278,7 +1940,7 @@ describe('session-agent-switch handoff injection', () => {
     );
     // 落库:用户原文,不带交接段(display 与 sent 分离)
     const persisted = vi.mocked(deps.createDbMessage).mock.calls[0]?.[1];
-    expect(persisted?.content).toBe('新消息');
+    expect(persisted?.content).toBe('{"text":"新消息","images":[],"files":[]}');
     expect(consumePendingHandoff).toHaveBeenCalledWith('session-1');
   });
 
@@ -1309,6 +1971,249 @@ describe('session-agent-switch handoff injection', () => {
     await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '新消息' }, undefined, {});
     expect(session.send).toHaveBeenCalledWith({ type: 'user', content: '新消息' }, expect.anything());
     expect(consumePendingHandoff).not.toHaveBeenCalled();
+  });
+
+  it('计划对账段命中时前置进 wire payload,落库内容保持用户原文', async () => {
+    const { deps, session } = createDeps({
+      peekPlanReconcileNote: vi.fn(async () => ({ note: 'RECONCILE-NOTE' })),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '新消息' }, undefined, {
+      persistUserMessage: { clientId: 'client-1', content: '{"text":"新消息","images":[],"files":[]}' },
+    });
+
+    expect(session.send).toHaveBeenCalledWith(
+      { type: 'user', content: 'RECONCILE-NOTE\n\n新消息' },
+      expect.anything(),
+    );
+    const persisted = vi.mocked(deps.createDbMessage).mock.calls[0]?.[1];
+    expect(persisted?.content).toBe('{"text":"新消息","images":[],"files":[]}');
+  });
+
+  it('计划对账在交接段外层(对账在前、交接在后)', async () => {
+    const { deps, session } = createDeps({
+      peekPendingHandoff: vi.fn(async () => 'HANDOFF-TEXT'),
+      consumePendingHandoff: vi.fn(),
+      peekPlanReconcileNote: vi.fn(async () => ({ note: 'RECONCILE-NOTE' })),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '新消息' }, undefined, {
+      persistUserMessage: { clientId: 'client-1', content: '{"text":"新消息","images":[],"files":[]}' },
+    });
+    expect(session.send).toHaveBeenCalledWith(
+      { type: 'user', content: 'RECONCILE-NOTE\n\nHANDOFF-TEXT\n\n新消息' },
+      expect.anything(),
+    );
+  });
+
+  it('内部派发(scheduler / 自动续跑)不注入对账', async () => {
+    const peekPlanReconcileNote = vi.fn(async () => ({ note: 'RECONCILE-NOTE' }));
+    const { deps, session } = createDeps({ peekPlanReconcileNote });
+    const transaction = createMakerSendTransaction(deps);
+
+    // scheduler 定时消息(顶层 origin)
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '定时活' }, undefined, {
+      origin: { kind: 'scheduler', scheduleId: 's1', scheduleName: 'n' },
+    });
+    expect(session.send).toHaveBeenLastCalledWith(
+      { type: 'user', content: '定时活' },
+      expect.anything(),
+    );
+
+    // 自动续跑(persistUserMessage.autoResume)
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '继续' }, undefined, {
+      persistUserMessage: { clientId: 'c2', content: '继续', autoResume: true },
+    });
+    expect(session.send).toHaveBeenLastCalledWith(
+      { type: 'user', content: '继续' },
+      expect.anything(),
+    );
+
+    // /compact 等斜杠控制消息(落库是 stringifyUserContent 信封,判据须解开信封)
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '/compact' }, undefined, {
+      persistUserMessage: { clientId: 'c3', content: '{"text":"/compact","images":[],"files":[]}' },
+    });
+    expect(session.send).toHaveBeenLastCalledWith(
+      { type: 'user', content: '/compact' },
+      expect.anything(),
+    );
+
+    // coordinator 的合成续跑指令([UI_ACTION_TRIGGER] 前缀,信封形态)
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '[UI_ACTION_TRIGGER]Continue' }, undefined, {
+      persistUserMessage: { clientId: 'c4', content: '{"text":"[UI_ACTION_TRIGGER]Continue"}' },
+    });
+    expect(session.send).toHaveBeenLastCalledWith(
+      { type: 'user', content: '[UI_ACTION_TRIGGER]Continue' },
+      expect.anything(),
+    );
+
+    // 不落可显示 user 行的派发(无 persistUserMessage)
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '内部控制' }, undefined, {});
+    expect(session.send).toHaveBeenLastCalledWith(
+      { type: 'user', content: '内部控制' },
+      expect.anything(),
+    );
+
+    // 内部派发路径不应触发对账查询
+    expect(peekPlanReconcileNote).not.toHaveBeenCalled();
+  });
+
+  it('按信封里的 slash 范围区分控制指令与绝对路径开头的真实提问', async () => {
+    const peekPlanReconcileNote = vi.fn(async () => ({ note: 'RECONCILE-NOTE' }));
+    const { deps, session } = createDeps({ peekPlanReconcileNote });
+    const transaction = createMakerSendTransaction(deps);
+
+    // `/tmp/build.log 为什么失败` 是普通提问:Composer 写了空的 slashCommandRanges
+    // (= 确认没有指令),不能因首字符 '/' 就绕过对账(review P2)。
+    await transaction.sendToAgentAccepted(
+      'session-1',
+      { type: 'user', content: '/tmp/build.log 为什么失败' },
+      undefined,
+      {
+        persistUserMessage: {
+          clientId: 'c-path',
+          content: '{"text":"/tmp/build.log 为什么失败","images":[],"files":[],"slashCommandRanges":[]}',
+        },
+      },
+    );
+    expect(session.send).toHaveBeenLastCalledWith(
+      { type: 'user', content: 'RECONCILE-NOTE\n\n/tmp/build.log 为什么失败' },
+      expect.anything(),
+    );
+
+    // 真正的控制指令带起点为 0 的范围:照旧排除。
+    await transaction.sendToAgentAccepted(
+      'session-1',
+      { type: 'user', content: '/compact' },
+      undefined,
+      {
+        persistUserMessage: {
+          clientId: 'c-cmd',
+          content: '{"text":"/compact","images":[],"files":[],"slashCommandRanges":[{"start":0,"end":8}]}',
+        },
+      },
+    );
+    expect(session.send).toHaveBeenLastCalledWith(
+      { type: 'user', content: '/compact' },
+      expect.anything(),
+    );
+
+    // 正文中段出现的指令形态(范围起点非 0)仍是真实提问。
+    await transaction.sendToAgentAccepted(
+      'session-1',
+      { type: 'user', content: '解释一下 /compact 做了什么' },
+      undefined,
+      {
+        persistUserMessage: {
+          clientId: 'c-mid',
+          content: '{"text":"解释一下 /compact 做了什么","images":[],"files":[],"slashCommandRanges":[{"start":5,"end":13}]}',
+        },
+      },
+    );
+    expect(session.send).toHaveBeenLastCalledWith(
+      { type: 'user', content: 'RECONCILE-NOTE\n\n解释一下 /compact 做了什么' },
+      expect.anything(),
+    );
+  });
+
+  it('计划对账覆盖仅附件轮次(正文空,带图片/文件)', async () => {
+    const peekPlanReconcileNote = vi.fn(async () => ({ note: 'RECONCILE-NOTE' }));
+    const { deps, session } = createDeps({ peekPlanReconcileNote });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted(
+      'session-1',
+      { type: 'user', content: [{ type: 'image', source: 'img-1' }] },
+      undefined,
+      {
+        persistUserMessage: {
+          clientId: 'att-1',
+          content: '{"text":"","images":["img-1"],"files":[]}',
+        },
+      },
+    );
+
+    expect(peekPlanReconcileNote).toHaveBeenCalledWith('session-1');
+  });
+
+  it('对账读取抛错时静默跳过,不挡发送', async () => {
+    const { deps, session } = createDeps({
+      peekPlanReconcileNote: vi.fn(async () => {
+        throw new Error('db unavailable');
+      }),
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '新消息' }, undefined, {});
+    expect(session.send).toHaveBeenCalledWith({ type: 'user', content: '新消息' }, expect.anything());
+  });
+
+  it('仅在 sealed 保护已被 vendor accepted 后消费', async () => {
+    const consumeSealedPlanReconcileNote = vi.fn(async () => undefined);
+    const { deps } = createDeps({
+      peekPlanReconcileNote: vi.fn(async () => ({
+        note: 'COMPLETED-GUARD',
+        sealedTurnId: 'turn-sealed',
+      })),
+      consumeSealedPlanReconcileNote,
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '继续' }, undefined, {
+      persistUserMessage: { clientId: 'guard-accepted', content: '继续' },
+    });
+
+    expect(consumeSealedPlanReconcileNote).toHaveBeenCalledWith('session-1', 'turn-sealed');
+  });
+
+  it('vendor 未 accepted 时保留 sealed 保护供重试', async () => {
+    const consumeSealedPlanReconcileNote = vi.fn(async () => undefined);
+    const session = createSession({
+      send: vi.fn(async () => ({ accepted: false, reason: 'cancelled-before-dispatch' }) as SessionSendResult),
+    });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => session),
+      peekPlanReconcileNote: vi.fn(async () => ({
+        note: 'COMPLETED-GUARD',
+        sealedTurnId: 'turn-sealed',
+      })),
+      consumeSealedPlanReconcileNote,
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '继续' }, undefined, {
+      persistUserMessage: { clientId: 'guard-rejected', content: '继续' },
+    });
+
+    expect(consumeSealedPlanReconcileNote).not.toHaveBeenCalled();
+  });
+
+  it('vendor 抛错时保留 sealed 保护供重试', async () => {
+    const consumeSealedPlanReconcileNote = vi.fn(async () => undefined);
+    const session = createSession({
+      send: vi.fn(async () => {
+        throw new Error('vendor unavailable');
+      }),
+    });
+    const { deps } = createDeps({
+      getSession: vi.fn(() => session),
+      peekPlanReconcileNote: vi.fn(async () => ({
+        note: 'COMPLETED-GUARD',
+        sealedTurnId: 'turn-sealed',
+      })),
+      consumeSealedPlanReconcileNote,
+    });
+    const transaction = createMakerSendTransaction(deps);
+
+    await expect(
+      transaction.sendToAgentAccepted('session-1', { type: 'user', content: '继续' }, undefined, {
+        persistUserMessage: { clientId: 'guard-error', content: '继续' },
+      }),
+    ).rejects.toThrow('vendor unavailable');
+
+    expect(consumeSealedPlanReconcileNote).not.toHaveBeenCalled();
   });
 
   it('lazy-create 前调用 reconcileCreateOptsWithDb 以 DB 行校正 createOpts', async () => {
@@ -1410,5 +2315,37 @@ describe('session-agent-switch handoff injection', () => {
     expect(persisted?.content).toBe('PR #193 heartbeat prompt');
     // 5. accepted 之后才消费交接(未派发则保留下次重试)。
     expect(consumePendingHandoff).toHaveBeenCalledWith('session-1');
+  });
+
+  it('overflow prepare 在 getSession 之前；peek 不再关掉发送目标', async () => {
+    const callOrder: string[] = [];
+    let unhealthy = true;
+    const fresh = createSession();
+    const { deps } = createDeps({
+      prepareUnhealthySession: vi.fn(async () => {
+        callOrder.push('prepare');
+        unhealthy = false;
+      }),
+      getSession: vi.fn(() => {
+        callOrder.push('getSession');
+        return unhealthy ? createSession({ getStatus: () => 'closed' as const }) : fresh;
+      }),
+      peekPendingHandoff: vi.fn(async () => {
+        callOrder.push('peek');
+        return 'OVERFLOW-HANDOFF';
+      }),
+    });
+    const transaction = createMakerSendTransaction(deps);
+    await transaction.sendToAgentAccepted('session-1', { type: 'user', content: '继续' }, {
+      agentKind: 'codex',
+      workingDir: '/tmp/w',
+    });
+
+    expect(callOrder.indexOf('prepare')).toBeGreaterThanOrEqual(0);
+    expect(callOrder.indexOf('prepare')).toBeLessThan(callOrder.indexOf('getSession'));
+    expect(callOrder.indexOf('getSession')).toBeLessThan(callOrder.indexOf('peek'));
+    expect(fresh.send).toHaveBeenCalledTimes(1);
+    const sent = vi.mocked(fresh.send).mock.calls[0]?.[0] as { content: string };
+    expect(sent.content).toContain('OVERFLOW-HANDOFF');
   });
 });

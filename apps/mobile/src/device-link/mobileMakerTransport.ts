@@ -1,4 +1,8 @@
 import type {
+  ConversationSearchRequest,
+  ConversationSearchResponse,
+} from '@cindy/maker-shared/conversation-search';
+import type {
   InputProjection,
   PendingInteraction,
   QueuedRemoteMessage,
@@ -124,6 +128,7 @@ export interface MobileLearnStartRequest {
   input: string;
   sourceKind: 'freetext' | 'session' | 'hub';
   hubSlug?: string;
+  hubCatalogScope?: 'market' | 'team';
   originSessionId?: string;
 }
 
@@ -274,6 +279,8 @@ export interface MobileActiveSessionSnapshot {
 export interface MobileModelPrice {
   inputUsdPerMtok: number;
   outputUsdPerMtok: number;
+  /** Gateway 折扣比例 0..1;旧被控端不下发。计费金额 = 原价 × (1 - costDiscount)。 */
+  costDiscount?: number;
 }
 
 export type MobileModelPricingMap = Record<string, MobileModelPrice>;
@@ -317,6 +324,16 @@ export interface MobileNewMakerDefaults {
   [key: string]: unknown;
 }
 
+/**
+ * 工作端拥有的 New Maker worktree 源分支镜像。revision 由工作端按 canonical
+ * baseRepo 独立递增；手机只用它做 pull / push / apply 回包的乱序收敛，不自行生成。
+ */
+export interface MobileWorktreeBranchPreferenceSnapshot {
+  baseRepo: string;
+  sourceBranch: string;
+  revision: number;
+}
+
 /** 工作端 worktree:detect-cwd 资格探测回包(形状对齐被控端 DetectCwdResp)。 */
 export interface MobileWorktreeDetectCwdResult {
   isGitRepo: boolean;
@@ -330,6 +347,12 @@ export interface MobileWorktreeDetectCwdResult {
    * 字段却不把它写入元数据，因此省略必须在副作用前视为不支持。
    */
   supportsRecoveryKeyDiscard?: boolean;
+}
+
+/** 工作端 worktree:list-branches 回包(本地分支列表 + 当前 HEAD 分支)。 */
+export interface MobileWorktreeListBranchesResult {
+  branches: string[];
+  current: string;
 }
 
 /** 工作端 worktree:create 元信息(形状对齐被控端 WorktreeMeta)。 */
@@ -373,6 +396,7 @@ export interface MobileMakerTransport {
     modelVisibilityOverrides?: Record<string, boolean>;
   }>;
   getSession(sessionId: string): Promise<RemoteSession>;
+  searchConversations(request: ConversationSearchRequest): Promise<ConversationSearchResponse>;
   patchSessionMeta(sessionId: string, patch: SessionMetaPatch): Promise<RemoteSession>;
   /**
    * error-tail「忽略」:被控端把该 role='error' 行的 content merge dismissed:true
@@ -404,7 +428,12 @@ export interface MobileMakerTransport {
    * 切模型。可选第 3 参 providerId = 同时切来源(被控端按其路由 + 持久化 provider_id)。
    * 不传 providerId = 老 2 参语义,不动会话当前来源选择。
    */
-  setModel(sessionId: string, model: string, providerId?: string): Promise<void>;
+  setModel(
+    sessionId: string,
+    model: string,
+    providerId?: string,
+    selection?: { effort: string | null; fastMode: boolean },
+  ): Promise<{ deferred?: boolean; superseded?: boolean } | undefined>;
   /** 登记跨 Agent 切换意图；真正切换在下一条消息发送时由 desktop main 执行。 */
   switchSessionAgent(
     sessionId: string,
@@ -431,6 +460,7 @@ export interface MobileMakerTransport {
    * 网关配额。老被控端 CHANNEL_NOT_ALLOWED → 调用方隐藏限额区块。
    */
   getAccountUsage(agentKind: MobileAgentKind): Promise<unknown>;
+  getSessionEstimatedValue(sessionId: string): Promise<{ totalValueMoney?: unknown; totalValueUsd?: number }>;
   /** Codex app-server authoritative windows plus banked reset credits and a bound reset offer. */
   getCodexRateLimits(): Promise<MobileCodexRateLimitsResult>;
   /** Consume the desktop-issued offer; retries must pass the same idempotency key. */
@@ -445,6 +475,18 @@ export interface MobileMakerTransport {
   getNewMakerDefaults(agentKind: MobileAgentKind): Promise<MobileNewMakerDefaults>;
   /** 「新建会话默认启用 worktree」写穿工作端(老被控端 → 调用方吞掉降级)。 */
   applyNewMakerWorktreePref(worktreeEnabled: boolean): Promise<void>;
+  /** 读取工作端某 canonical repo 的 New Maker worktree 源分支；未选择过返回 null。 */
+  getNewMakerWorktreeBranchPref(
+    baseRepo: string,
+  ): Promise<MobileWorktreeBranchPreferenceSnapshot | null>;
+  /**
+   * 把源分支选择写穿工作端；回包是工作端接受后的权威 snapshot。
+   * 与 worktree checkbox 使用独立 channel，选择分支不会改动开关偏好。
+   */
+  applyNewMakerWorktreeBranchPref(
+    baseRepo: string,
+    sourceBranch: string,
+  ): Promise<MobileWorktreeBranchPreferenceSnapshot>;
   /**
    * worktree 两步建会话的工作端通道(git/fs 全在被控端执行):detect-cwd 做资格探测,
    * suggest-name 生成名字,create 以预生成 sessionId 建 worktree 拿路径(第二步再以该
@@ -452,6 +494,7 @@ export interface MobileMakerTransport {
    */
   worktree: {
     detectCwd(cwd: string): Promise<MobileWorktreeDetectCwdResult>;
+    listBranches(baseRepo: string): Promise<MobileWorktreeListBranchesResult>;
     suggestName(baseRepo: string): Promise<{ name: string }>;
     create(req: {
       sessionId: string;
@@ -470,7 +513,10 @@ export interface MobileMakerTransport {
       | { sessionId: string; recoveryKey: string; path?: never }
     ): Promise<{ discarded: true; branchDeleted?: boolean }>;
   };
-  listAgentCommands(agentKind: MobileAgentKind): Promise<MobileAgentCommandListResult>;
+  listAgentCommands(
+    agentKind: MobileAgentKind,
+    opts?: { sessionId?: string },
+  ): Promise<MobileAgentCommandListResult>;
   /** 被控端 desktop 自有 slash 命令清单(palette 展示;移动端只放行可执行子集)。 */
   listDesktopCommands(): Promise<MobileDesktopCommandListResult>;
   /**
@@ -478,7 +524,10 @@ export interface MobileMakerTransport {
    * 被控端执行,这里只拿 runId;评审 UI 暂只有桌面端,移动端以系统卡提示去桌面评审。
    */
   learnStart(req: MobileLearnStartRequest): Promise<{ runId: string }>;
-  listAgentSkills(agentKind: MobileAgentKind, opts: { workingDir?: string; forceReload?: boolean }): Promise<MobileAgentSkillListResult>;
+  listAgentSkills(
+    agentKind: MobileAgentKind,
+    opts: { workingDir?: string; forceReload?: boolean; sessionId?: string },
+  ): Promise<MobileAgentSkillListResult>;
   scanAtResources(agentKind: MobileAgentKind, opts: { workingDir: string; cap?: number; query?: string }): Promise<MobileAtResourceScanResult>;
   fetchRemoteMedia(url: string, opts?: { skipCache?: boolean; thumbnail?: boolean }): Promise<MobileRemoteMediaFetchResult>;
   transcribeVoice(input: MobileVoiceTranscribeRequest): Promise<MobileVoiceTranscribeResult>;
@@ -539,6 +588,12 @@ export interface MobileMakerTransport {
   projectAutomation: {
     removeSchedule(input: { workingDir: string; id: string }): Promise<unknown>;
   };
+  /** 手动压缩会话上下文(pi 原生 compact,capability-aware 的 maker:compact-session;
+   *  input.compact 是 Claude Code 专用的 maker:input:compact,两者不混)。 */
+  compactSession(
+    sessionId: string,
+    instructions?: string,
+  ): Promise<{ tokensBefore?: number; estimatedTokensAfter?: number; noop?: boolean } | null>;
   input: {
     getProjection(sessionId: string): Promise<InputProjection>;
     enqueue(sessionId: string, item: QueuedRemoteMessage, opts?: { sendAtMs?: number }): Promise<InputProjection>;
@@ -619,6 +674,7 @@ export function createMobileMakerTransport({
       capabilities: [CONTROLLER_CAPABILITY_PROVIDER_LOGO_KINDS_V2],
     }]),
     getSession: (sessionId) => call('local-db:sessions:get', [sessionId]),
+    searchConversations: (request) => call('local-db:conversations:search', [request]),
     patchSessionMeta: (sessionId, patch) => call('local-db:sessions:patch-meta', [sessionId, patch]),
     dismissErrorMessage: (sessionId, clientId) =>
       call('local-db:messages:dismiss-error', [sessionId, clientId]),
@@ -631,9 +687,32 @@ export function createMobileMakerTransport({
       call('local-db:messages:around-client-id', [sessionId, clientId, opts]),
     send: (sessionId, message, createOpts, sendOpts) =>
       call('maker:send', [sessionId, message, createOpts, sendOpts]),
-    listActiveSessions: () => call('maker:list-active'),
-    setModel: (sessionId, model, providerId) =>
-      call('maker:set-model', providerId ? [sessionId, model, providerId] : [sessionId, model]),
+    listActiveSessions: () => call('maker:list-active', [{ summary: true }]),
+    setModel: async (sessionId, model, providerId, selection) => {
+      const wireArgs = selection
+        ? [sessionId, model, providerId ?? null, null, selection]
+        : providerId
+          ? [sessionId, model, providerId]
+          : [sessionId, model];
+      const result = await call<{ deferred?: boolean; superseded?: boolean } | undefined>(
+        'maker:set-model',
+        wireArgs,
+      );
+      if (
+        result !== null &&
+        typeof result === 'object' &&
+        ('contextWindowConfirmationRequired' in result ||
+          'contextTokensForConfirmation' in result)
+      ) {
+        throw Object.assign(
+          new Error(
+            'remote model-window confirmation is unsupported; runtime selection was not changed',
+          ),
+          { code: 'PRECONDITION_FAILED' },
+        );
+      }
+      return result;
+    },
     switchSessionAgent: (
       sessionId,
       targetAgentKind,
@@ -658,6 +737,7 @@ export function createMobileMakerTransport({
     setExtraDirs: (sessionId, dirs) => call('maker:set-extra-dirs', [sessionId, dirs]),
     getModelPricing: () => call('maker:usage:model-pricing'),
     getAccountUsage: (agentKind) => call('maker:usage:account', [agentKind]),
+    getSessionEstimatedValue: (sessionId) => call('local-db:messages:estimatedSessionValue', [sessionId]),
     getCodexRateLimits: () => call('maker:usage:codex-rate-limits'),
     resetCodexRateLimits: (idempotencyKey) => (
       call('maker:usage:codex-rate-limit-reset', [idempotencyKey])
@@ -668,13 +748,19 @@ export function createMobileMakerTransport({
     getNewMakerDefaults: (agentKind) => call('maker:get-new-maker-defaults', [agentKind]),
     applyNewMakerWorktreePref: (worktreeEnabled) =>
       call('maker:apply-new-maker-worktree-pref', [{ worktreeEnabled }]),
+    getNewMakerWorktreeBranchPref: (baseRepo) =>
+      call('maker:get-new-maker-worktree-branch-pref', [{ baseRepo }]),
+    applyNewMakerWorktreeBranchPref: (baseRepo, sourceBranch) =>
+      call('maker:apply-new-maker-worktree-branch-pref', [{ baseRepo, sourceBranch }]),
     worktree: {
       detectCwd: (cwd) => call('worktree:detect-cwd', [{ cwd }]),
+      listBranches: (baseRepo) => call('worktree:list-branches', [{ baseRepo }]),
       suggestName: (baseRepo) => call('worktree:suggest-name', [{ baseRepo }]),
       create: (req) => call('worktree:create', [req]),
       discardPrecreated: (input) => call('worktree:discard-precreated', [input]),
     },
-    listAgentCommands: (agentKind) => call('maker:list-agent-commands', [agentKind]),
+    listAgentCommands: (agentKind, opts) =>
+      call('maker:list-agent-commands', opts ? [agentKind, opts] : [agentKind]),
     listDesktopCommands: () => call('maker:list-desktop-commands', []),
     learnStart: (req) => call('learn:start', [req]),
     listAgentSkills: (agentKind, opts) => call('maker:list-agent-skills', [agentKind, opts]),
@@ -735,6 +821,11 @@ export function createMobileMakerTransport({
     projectAutomation: {
       removeSchedule: (input) => call('maker:project-automation:remove-schedule', [input]),
     },
+    compactSession: (sessionId, instructions) =>
+      call(
+        'maker:compact-session',
+        instructions === undefined ? [sessionId] : [sessionId, instructions],
+      ),
     input: {
       getProjection: (sessionId) => call('maker:input:get-projection', [sessionId]),
       enqueue: (sessionId, item, opts) => call('maker:input:enqueue', [sessionId, item, opts]),

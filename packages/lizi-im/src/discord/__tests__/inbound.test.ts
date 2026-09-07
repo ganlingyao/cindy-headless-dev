@@ -36,13 +36,40 @@ describe('normalizeDmMessage', () => {
     });
   });
 
+  it('returns null when channel id is missing so the transport suppresses it', async () => {
+    // `channelId: ''` flows through the helper because `'' ?? 'dm-1'` is `''`
+    // (only null/undefined triggers the default). Asserts an explicit empty
+    // string is treated as a missing channel.
+    const emptyString = await normalizeDmMessage(
+      message({ content: 'hello', channelId: '' }),
+      { contextId: 'app-1', mediaDir: tempDir(), download: vi.fn() },
+    );
+    expect(emptyString).toBeNull();
+
+    // A genuinely channel-less event (no channelId and no channel.id) —
+    // e.g. a partial presence update or a guild event leaking past the DM
+    // filter — must also be suppressed. The `message()` helper defaults a
+    // missing channelId to 'dm-1', so construct the raw object directly.
+    const channelLess = await normalizeDmMessage(
+      {
+        id: 'msg-x',
+        content: 'leaked guild text',
+        author: { id: 'user-1' },
+        attachments: [],
+        stickers: [],
+      } as Parameters<typeof normalizeDmMessage>[0],
+      { contextId: 'app-1', mediaDir: tempDir(), download: vi.fn() },
+    );
+    expect(channelLess).toBeNull();
+  });
+
   it('downloads image attachments into the media dir', async () => {
     const mediaDir = tempDir();
     const download = vi.fn(async (_url: string, dest: string) => {
       fs.writeFileSync(dest, 'image');
     });
 
-    const event = await normalizeDmMessage(
+    const event = (await normalizeDmMessage(
       message({
         attachments: [
           {
@@ -55,7 +82,7 @@ describe('normalizeDmMessage', () => {
         ],
       }),
       { contextId: 'app-1', mediaDir, download },
-    );
+    ))!;
 
     expect(download).toHaveBeenCalledWith(
       'https://cdn.example/photo.png',
@@ -87,7 +114,7 @@ describe('normalizeDmMessage', () => {
       resolveMediaUrl: vi.fn(() => null),
     };
 
-    const event = await normalizeDmMessage(
+    const event = (await normalizeDmMessage(
       message({
         attachments: [
           { id: 'att-1', name: 'photo.png', url: 'https://cdn.example/photo.png', size: 1024, contentType: 'image/png' },
@@ -95,7 +122,7 @@ describe('normalizeDmMessage', () => {
         ],
       }),
       { contextId: 'app-1', mediaDir, download, media },
-    );
+    ))!;
 
     expect(cacheImage).toHaveBeenCalledTimes(1);
     expect(cacheImage.mock.calls[0][0]).toMatchObject({
@@ -131,14 +158,14 @@ describe('normalizeDmMessage', () => {
       resolveMediaUrl: vi.fn(() => null),
     };
 
-    const event = await normalizeDmMessage(
+    const event = (await normalizeDmMessage(
       message({
         attachments: [
           { id: 'att-1', name: 'photo.png', url: 'https://cdn.example/photo.png', size: 1024, contentType: 'image/png' },
         ],
       }),
       { contextId: 'app-1', mediaDir, download, media },
-    );
+    ))!;
 
     expect(event.attachments[0]).toMatchObject({
       kind: 'image',
@@ -151,7 +178,7 @@ describe('normalizeDmMessage', () => {
   it('marks attachments over 50MiB unsupported without downloading', async () => {
     const download = vi.fn();
 
-    const event = await normalizeDmMessage(
+    const event = (await normalizeDmMessage(
       message({
         attachments: [
           {
@@ -164,7 +191,7 @@ describe('normalizeDmMessage', () => {
         ],
       }),
       { contextId: 'app-1', mediaDir: tempDir(), download },
-    );
+    ))!;
 
     expect(download).not.toHaveBeenCalled();
     expect(event.attachments).toEqual([]);
@@ -172,10 +199,10 @@ describe('normalizeDmMessage', () => {
   });
 
   it('marks stickers unsupported', async () => {
-    const event = await normalizeDmMessage(
+    const event = (await normalizeDmMessage(
       message({ stickers: [{ id: 'sticker-1', name: 'wave' }] }),
       { contextId: 'app-1', mediaDir: tempDir(), download: vi.fn() },
-    );
+    ))!;
 
     expect(event.unsupported).toEqual([{ type: 'sticker', label: 'wave' }]);
   });
@@ -222,6 +249,7 @@ describe('normalizeDmMessage', () => {
       ),
     ]);
 
+    if (!first || !second) throw new Error("expected both messages");
     expect(destinations).toEqual([
       path.join(mediaDir, 'msg-a-image.png'),
       path.join(mediaDir, 'msg-b-image.png'),
@@ -238,7 +266,7 @@ describe('normalizeDmMessage', () => {
       fs.writeFileSync(dest, 'image');
     });
 
-    const event = await normalizeDmMessage(
+    const event = (await normalizeDmMessage(
       message({
         id: 'msg-a',
         attachments: [
@@ -259,7 +287,7 @@ describe('normalizeDmMessage', () => {
         ],
       }),
       { contextId: 'app-1', mediaDir, download },
-    );
+    ))!;
 
     expect(event.attachments.map((a) => a.absPath)).toEqual([
       path.join(mediaDir, 'msg-a-att-1-image.png'),
@@ -277,6 +305,90 @@ describe('DiscordIM inbound pipeline', () => {
     expect(() => new DiscordIM(host)).toThrow(
       'IMHost.paths.discordMediaDir is required to wire the discord channel',
     );
+  });
+
+  it('defers lifecycle preference reads until explicit init', async () => {
+    const host = makeHost({
+      initialSecrets: [['discord-bot-lifecycle-announcement', 'false']],
+    });
+    const readSecret = vi.spyOn(host.secrets, 'read');
+    const im = new DiscordIM(host);
+
+    expect(readSecret).not.toHaveBeenCalled();
+
+    im.registerIpc();
+    await im.init();
+
+    expect(readSecret).toHaveBeenCalledWith('discord-bot-lifecycle-announcement');
+    await expect(host.invoke('discordBot:get-status')).resolves.toMatchObject({
+      lifecycleAnnouncement: false,
+    });
+  });
+
+  it('reads the persisted lifecycle preference from IPC before init', async () => {
+    const host = makeHost({
+      initialSecrets: [['discord-bot-lifecycle-announcement', 'false']],
+    });
+    const readSecret = vi.spyOn(host.secrets, 'read');
+    const im = new DiscordIM(host);
+
+    expect(readSecret).not.toHaveBeenCalled();
+
+    im.registerIpc();
+
+    await expect(host.invoke('discordBot:get-status')).resolves.toMatchObject({
+      lifecycleAnnouncement: false,
+    });
+    expect(readSecret).toHaveBeenCalledWith('discord-bot-lifecycle-announcement');
+  });
+
+  it('rolls back a pre-init lifecycle write failure to the persisted preference', async () => {
+    const host = makeHost({
+      initialSecrets: [['discord-bot-lifecycle-announcement', 'false']],
+      write: (name, value, secrets) => {
+        if (name === 'discord-bot-lifecycle-announcement') return false;
+        secrets.set(name, value);
+        return true;
+      },
+    });
+    const im = new DiscordIM(host);
+    im.registerIpc();
+
+    await expect(
+      host.invoke('discordBot:set-lifecycle-announcement', { enabled: true }),
+    ).resolves.toEqual({
+      ok: false,
+      lifecycleAnnouncement: false,
+    });
+    expect(host.readSecret('discord-bot-lifecycle-announcement')).toBe('false');
+  });
+
+  it('rolls back a post-init lifecycle write failure to the persisted preference', async () => {
+    let rejectLifecycleWrites = false;
+    const host = makeHost({
+      initialSecrets: [['discord-bot-lifecycle-announcement', 'false']],
+      write: (name, value, secrets) => {
+        if (name === 'discord-bot-lifecycle-announcement' && rejectLifecycleWrites) return false;
+        secrets.set(name, value);
+        return true;
+      },
+    });
+    const im = new DiscordIM(host);
+    im.registerIpc();
+    await im.init();
+
+    // Simulate the active account's persisted preference changing after init,
+    // leaving the runtime cache stale until the next explicit lifecycle load.
+    expect(host.secrets.write('discord-bot-lifecycle-announcement', 'true')).toBe(true);
+    rejectLifecycleWrites = true;
+
+    await expect(
+      host.invoke('discordBot:set-lifecycle-announcement', { enabled: false }),
+    ).resolves.toEqual({
+      ok: false,
+      lifecycleAnnouncement: true,
+    });
+    expect(host.readSecret('discord-bot-lifecycle-announcement')).toBe('true');
   });
 
   it('silently drops non-owner DM messages', async () => {
@@ -762,11 +874,186 @@ describe('DiscordIM inbound pipeline', () => {
       },
     });
 
+    im.registerIpc();
     await im.init();
     await flushMicrotasks();
 
     expect(channel.send).toHaveBeenCalledWith('localized:online');
     expect(host.readSecret('discord-bot-runtime-active')).toBeTruthy();
+  });
+
+  it('suppresses all lifecycle notices and clears a dirty marker when disabled', async () => {
+    const channel = makeChannel('dm-1');
+    const gateway = makeGateway({ client: makeClient(channel) });
+    gateway.connect.mockImplementationOnce(async () => {
+      gateway.emitStatus({ kind: 'connected', appId: 'bot#0000' });
+    });
+    const host = makeHost({
+      initialSecrets: [
+        ['discord-bot-token', 'token'],
+        ['discord-owner-user-id', 'user-1'],
+        ['discord-bot-runtime-active', 'previous-run'],
+        ['discord-bot-lifecycle-announcement', 'false'],
+      ],
+    });
+    const im = new DiscordIM(host, {
+      ownerNoticeText: (phase) => `localized:${phase}`,
+      gatewayFactory: (handlers) => {
+        gateway.setHandlers(handlers);
+        return gateway;
+      },
+    });
+
+    im.registerIpc();
+    await im.init();
+    await flushMicrotasks();
+    await im.dispose();
+
+    expect(channel.send).not.toHaveBeenCalled();
+    expect(host.readSecret('discord-bot-runtime-active')).toBeNull();
+    await expect(host.invoke('discordBot:get-status')).resolves.toMatchObject({
+      lifecycleAnnouncement: false,
+    });
+  });
+
+  it('invalidates a queued dirty-runtime notice when lifecycle announcements are disabled', async () => {
+    const fetchStarted = deferred();
+    const releaseFetch = deferred();
+    const channel = makeChannel('dm-1');
+    const client = {
+      users: {
+        fetch: vi.fn(async () => {
+          fetchStarted.resolve();
+          await releaseFetch.promise;
+          return { createDM: vi.fn(async () => channel) };
+        }),
+      },
+    };
+    const gateway = makeGateway({ client });
+    gateway.connect.mockImplementationOnce(async () => {
+      gateway.emitStatus({ kind: 'connected', appId: 'bot#0000' });
+    });
+    const host = makeHost({
+      initialSecrets: [
+        ['discord-bot-token', 'token'],
+        ['discord-owner-user-id', 'user-1'],
+        ['discord-bot-runtime-active', 'previous-run'],
+      ],
+    });
+    const im = new DiscordIM(host, {
+      ownerNoticeText: (phase) => `localized:${phase}`,
+      gatewayFactory: (handlers) => {
+        gateway.setHandlers(handlers);
+        return gateway;
+      },
+    });
+
+    im.registerIpc();
+    await im.init();
+    await fetchStarted.promise;
+
+    await host.invoke('discordBot:set-lifecycle-announcement', { enabled: false });
+    expect(host.readSecret('discord-bot-lifecycle-announcement')).toBe('false');
+    releaseFetch.resolve();
+    await flushMicrotasks();
+    await im.dispose();
+
+    expect(channel.send).not.toHaveBeenCalled();
+    expect(host.readSecret('discord-bot-runtime-active')).toBeNull();
+  });
+
+  it('keeps linked and disconnected confirmations enabled when lifecycle notices are disabled', async () => {
+    const channel = makeChannel('dm-1');
+    const gateway = makeGateway({ client: makeClient(channel) });
+    gateway.connect.mockImplementationOnce(async () => {
+      gateway.emitStatus({ kind: 'connected', appId: 'bot#0000' });
+    });
+    const host = makeHost({
+      initialSecrets: [
+        ['discord-bot-token', 'token'],
+        ['discord-owner-user-id', 'user-1'],
+        ['discord-bot-runtime-active', 'previous-run'],
+        ['discord-bot-lifecycle-announcement', 'false'],
+      ],
+    });
+    const im = new DiscordIM(host, {
+      ownerNoticeText: (phase) => `localized:${phase}`,
+      gatewayFactory: (handlers) => {
+        gateway.setHandlers(handlers);
+        return gateway;
+      },
+    });
+
+    im.registerIpc();
+    await host.invoke('discordBot:set-config', {
+      token: 'new-token',
+      ownerUserId: 'user-1',
+    });
+
+    expect(host.readSecret('discord-bot-runtime-active')).toBeNull();
+    await host.invoke('discordBot:disconnect');
+
+    expect(channel.send.mock.calls.map(([payload]) => payload)).toEqual([
+      'localized:linked',
+      'localized:disconnected',
+    ]);
+    expect(host.readSecret('discord-bot-lifecycle-announcement')).toBe('false');
+  });
+
+  it('rejects an invalid lifecycle announcement payload without changing the preference', async () => {
+    const host = makeHost({
+      initialSecrets: [['discord-bot-lifecycle-announcement', 'false']],
+    });
+    const im = new DiscordIM(host);
+    im.registerIpc();
+    await im.init();
+
+    await expect(host.invoke('discordBot:set-lifecycle-announcement', {}))
+      .rejects.toThrow('[INVALID_PARAMS] enabled must be a boolean');
+    await expect(host.invoke('discordBot:get-status')).resolves.toMatchObject({
+      lifecycleAnnouncement: false,
+    });
+    expect(host.readSecret('discord-bot-lifecycle-announcement')).toBe('false');
+  });
+
+  it('does not leave a dirty runtime marker when an in-flight offline notice is invalidated', async () => {
+    const offlineStarted = deferred();
+    const releaseOffline = deferred();
+    const channel = makeChannel('dm-1');
+    channel.send
+      .mockResolvedValueOnce({ id: 'm-online' })
+      .mockImplementationOnce(async (payload: unknown) => {
+        expect(payload).toBe('localized:offline');
+        offlineStarted.resolve();
+        await releaseOffline.promise;
+        return { id: 'm-offline' };
+      });
+    const gateway = makeGateway({ client: makeClient(channel) });
+    gateway.connect.mockImplementationOnce(async () => {
+      gateway.emitStatus({ kind: 'connected', appId: 'bot#0000' });
+    });
+    const host = makeHost();
+    const im = new DiscordIM(host, {
+      ownerNoticeText: (phase) => `localized:${phase}`,
+      gatewayFactory: (handlers) => {
+        gateway.setHandlers(handlers);
+        return gateway;
+      },
+    });
+
+    im.registerIpc();
+    await im.init();
+    await flushMicrotasks();
+    expect(host.readSecret('discord-bot-runtime-active')).toBeTruthy();
+
+    const disposing = im.dispose();
+    await offlineStarted.promise;
+    await host.invoke('discordBot:set-lifecycle-announcement', { enabled: false });
+    await host.invoke('discordBot:set-lifecycle-announcement', { enabled: true });
+    releaseOffline.resolve();
+    await disposing;
+
+    expect(host.readSecret('discord-bot-runtime-active')).toBeNull();
   });
 
   it('does not repeat runtime online notice on transient gateway reconnect', async () => {
@@ -1666,6 +1953,7 @@ describe('DiscordIM inbound pipeline', () => {
         appId: 'bot#0000',
       },
       ownerUserId: 'user-1',
+      lifecycleAnnouncement: true,
     });
   });
 });

@@ -22,9 +22,10 @@ export interface GitContextSnapshot {
  *   telemetry  = 从 agent tool-call(Codex cwd / cc 编辑路径)推出的真实工作目录,可信
  *   worktree   = app 托管 worktree 的 live 路径,可信
  *   workingDir = 兜底用 session.working_dir(共享主 checkout,低信任,优先让位 PR 分支)
+ *   remote      = 远端 SSH 主机上直接探测到的目录分支,可信
  *   null       = 无可解析目录
  */
-export type GitContextDirSource = 'telemetry' | 'worktree' | 'workingDir' | null;
+export type GitContextDirSource = 'telemetry' | 'worktree' | 'workingDir' | 'remote' | null;
 
 /** git-context:get-for-session 的返回:解析出的目录 + 其 HEAD + 来源。 */
 export interface SessionGitDirResult {
@@ -67,5 +68,14 @@ export type PrStatusResult =
       owner: string;
       repo: string;
       prNumber: number;
-      reason: 'no-token' | 'not-found' | 'fetch-failed';
+      reason: PrStatusFailureReason;
     };
+
+/**
+ * 镜像 main/git-context/prStatusService.ts 的 PrStatusFailureReason:
+ *   gh-missing / gh-not-logged-in = 本机 gh 缺失 / 未登录,徽标点击引导 Agent 处理
+ *   no-token  = 拿不到 token 且不给原因(device-link 远端结果、gh 子进程超时)
+ *   not-found = 404;fetch-failed = 网络等其它错误
+ */
+export type PrStatusFailureReason =
+  'gh-missing' | 'gh-not-logged-in' | 'no-token' | 'not-found' | 'fetch-failed';
