@@ -135,7 +135,7 @@
   },
   "cindyHeadlessVersion": "0.3.1",
   "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2",
-  "cindyCommit": "d5014b707505ee012aca55c523e793a4acd3df9a",
+  "cindyCommit": "21f89ee3758b9a31479186ea23b14d7b7c888a5f",
   "sourceDirty": false,
   "lockfileDigest": "e3913adc88a80fbf9f4816320171606828ba20841ef7c9bf1431ed932d382660",
   "cliDigest": "7eb9e19113a4f7fecc79549dad51c82a06c7aafcc368c55be3d8591d0b22fb99",
@@ -157,5 +157,5 @@
   "observedCodexVersion": "codex-cli 0.145.0",
   "observedPiVersion": "0.84.4",
   "platform": "linux-x64",
-  "generatedAt": "2026-09-08T12:20:37+08:00"
+  "generatedAt": "2026-09-08T14:14:53+08:00"
 }
