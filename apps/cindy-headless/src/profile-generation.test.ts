@@ -41,10 +41,11 @@ describe('profile generation', () => {
       const profile = generateProfileFromManifest(manifest, { manifestPath, outputPath, harness });
       await mkdir(path.dirname(outputPath), { recursive: true });
       await writeFile(outputPath, JSON.stringify(profile, null, 2) + '\n');
-      const resolved = await readProfile(outputPath);
+      const resolved = await readProfile(outputPath, root);
       expect(resolved.profile.agentBackend).toBe(harness);
       expect(resolved.profile.model.effort).toBe('high');
       expect(resolved.systemPromptDigest).toBe(profile.expectedSystemPromptDigest);
+      expect(profile.agentBinaryPath).toBe(`bundle:bin/${harness === 'pi' ? 'pi/pi' : harness === 'claude-code' ? 'claude' : 'codex'}`);
       expect(path.isAbsolute(resolved.profile.agentBinaryPath)).toBe(true);
     });
   }
@@ -60,6 +61,18 @@ describe('profile generation', () => {
     expect(profile.supportedModelIds).toContain('custom-model');
   });
 
+  it('allows an explicitly configured gateway model without weakening default validation', async () => {
+    const { manifest, manifestPath } = await fixture();
+    const outputPath = path.join(path.dirname(manifestPath), 'gateway.json');
+    const options = { manifestPath, outputPath, harness: 'claude-code', modelId: 'deepseek/model' };
+    expect(() => generateProfileFromManifest(manifest, options)).toThrow('is not supported');
+    const profile = generateProfileFromManifest(manifest, {
+      ...options, gatewayModel: true, providerId: 'deepseek', providerBaseUrl: 'https://gateway.example.test', providerApi: 'anthropic-messages',
+    });
+    expect(profile.model).toMatchObject({ provider: 'deepseek', requestedId: 'deepseek/model' });
+    expect(profile.supportedModelIds).toContain('deepseek/model');
+  });
+
   it('generates a validated remote HTTP MCP configuration', async () => {
     const { root, manifest, manifestPath } = await fixture();
     const outputPath = path.join(root, 'generated-claude.json');
@@ -71,6 +84,12 @@ describe('profile generation', () => {
       mcpServers: [{ id: 'docs', transport: 'http', url: 'https://mcp.example.test', bearerTokenEnvVar: 'MCP_TOKEN' }],
     });
     expect(profile.mcpServers).toEqual([{ id: 'docs', transport: 'http', url: 'https://mcp.example.test', bearerTokenEnvVar: 'MCP_TOKEN' }]);
+  });
+
+  it('supports an exact empty feature selection instead of applying manifest defaults', async () => {
+    const { manifest, manifestPath } = await fixture();
+    const profile = generateProfileFromManifest(manifest, { manifestPath, outputPath: 'unused.json', harness: 'claude-code', features: [], exactFeatures: true });
+    expect(profile).toMatchObject({ projectContext: false, makerMemory: false, nativeMemory: false });
   });
 
   it('rejects unsupported features, harnesses and unconfigured custom models', async () => {

@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { HeadlessCapabilityCatalog, HeadlessHarnessCapability } from './compatibility.js';
 import { ADAPTER_HARNESSES, discoverCapabilityCatalog } from './compatibility.js';
 import type { HeadlessProfile } from './profile.js';
@@ -19,6 +18,8 @@ export interface ProfileGenerationOptions {
   maxOutputTokens?: number;
   mcpServers?: HeadlessProfile['mcpServers'];
   effort?: HeadlessProfile['model']['effort'];
+  gatewayModel?: boolean;
+  exactFeatures?: boolean;
 }
 
 type BundleManifest = Record<string, unknown> & { capabilityCatalog?: HeadlessCapabilityCatalog };
@@ -34,11 +35,6 @@ const DEFAULT_MODELS: Record<keyof typeof HARNESS_FILES, HeadlessProfile['model'
   codex: { provider: 'openai', requestedId: 'gpt-5.4-mini', effort: 'high' },
   pi: { provider: 'cindy', requestedId: 'claude-sonnet-4-6', contextLimit: 200_000, maxOutputTokens: 32_000, effort: 'high' },
 };
-
-function relativeFromOutput(outputPath: string, bundlePath: string): string {
-  const relative = path.relative(path.dirname(path.resolve(outputPath)), bundlePath);
-  return relative || path.basename(bundlePath);
-}
 
 function requireManifestString(manifest: BundleManifest, field: string): string {
   const value = manifest[field];
@@ -66,14 +62,17 @@ export function generateProfileFromManifest(manifest: BundleManifest, options: P
   if (unsupported.length) throw new Error(`DETECTED_BUT_UNSUPPORTED: ${unsupported.join(', ')}`);
 
   const files = HARNESS_FILES[harness];
-  const bundleRoot = path.dirname(path.resolve(options.manifestPath));
   const defaults = catalog.defaultValues ?? {};
-  const enabled = (id: string) => selected.has(id) || (selected.size === 0 && defaults[id] === true);
+  const enabled = (id: string) => selected.has(id) || (!options.exactFeatures && selected.size === 0 && defaults[id] === true);
   const defaultModel = entry.defaultModel ?? DEFAULT_MODELS[harness];
   const supportedModelIds = entry.supportedModelIds?.length ? [...entry.supportedModelIds] : [defaultModel.requestedId];
   const requestedId = options.modelId ?? defaultModel.requestedId;
-  const customPiModel = harness === 'pi' && !supportedModelIds.includes(requestedId);
-  if (harness !== 'pi' && !supportedModelIds.includes(requestedId)) throw new Error(`model ${requestedId} is not supported by harness ${harness}`);
+  const customModel = !supportedModelIds.includes(requestedId);
+  const customPiModel = harness === 'pi' && customModel;
+  if (harness !== 'pi' && customModel && !options.gatewayModel) throw new Error(`model ${requestedId} is not supported by harness ${harness}`);
+  if (options.gatewayModel && (!options.modelId || !options.providerId || !options.providerBaseUrl || !options.providerApi)) {
+    throw new Error('gateway models require --model, --provider, --base-url and --api');
+  }
 
   let nativeProviders: HeadlessProfile['nativeProviders'];
   let model: HeadlessProfile['model'] = { ...defaultModel, requestedId, effort: options.effort ?? defaultModel.effort ?? 'high' };
@@ -92,6 +91,10 @@ export function generateProfileFromManifest(manifest: BundleManifest, options: P
     }];
     supportedModelIds.push(requestedId);
   }
+  if (customModel && harness !== 'pi') {
+    model = { ...model, provider: options.providerId!, requestedId };
+    supportedModelIds.push(requestedId);
+  }
   if (selected.has('remoteHttpMcp') && !options.mcpServers?.length) {
     throw new Error('remoteHttpMcp requires --mcp-config with at least one server');
   }
@@ -104,12 +107,12 @@ export function generateProfileFromManifest(manifest: BundleManifest, options: P
     id: `generated-${harness}`,
     version: 1,
     agentBackend: harness,
-    agentBinaryPath: relativeFromOutput(options.outputPath, path.join(bundleRoot, ...files.binary.split('/'))),
+    agentBinaryPath: `bundle:${files.binary}`,
     agentBinaryVersion: requireManifestString(manifest, files.version),
     supportedModelIds,
     model,
     permissionMode: 'bypassPermissions',
-    systemPromptFile: relativeFromOutput(options.outputPath, path.join(bundleRoot, files.prompt)),
+    systemPromptFile: `bundle:${files.prompt}`,
     expectedSystemPromptDigest: requireManifestString(manifest, files.digest),
     makerMemory: enabled('makerMemory'),
     nativeMemory: enabled('nativeMemory'),

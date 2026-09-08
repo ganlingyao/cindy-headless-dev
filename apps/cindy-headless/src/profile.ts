@@ -203,10 +203,28 @@ export function profileDigest(profile: HeadlessProfile): string {
   return sha256(JSON.stringify(canonicalize(profile)));
 }
 
-export async function readProfile(profilePath: string): Promise<ResolvedProfile> {
+function resolveProfileResource(value: string, profileDir: string, bundleRoot?: string): string {
+  if (!value.startsWith('bundle:')) return path.isAbsolute(value) ? value : path.resolve(profileDir, value);
+  if (!bundleRoot) throw new Error('bundle: profile resources require an explicit bundle root');
+  const logicalPath = value.slice('bundle:'.length);
+  if (!logicalPath || logicalPath.startsWith('/') || logicalPath.startsWith('\\') || /^[A-Za-z]:/.test(logicalPath)) {
+    throw new Error('bundle: resource must use a relative bundle path');
+  }
+  const segments = logicalPath.split(/[\\/]/);
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    throw new Error('bundle: resource path contains an invalid segment');
+  }
+  const root = path.resolve(bundleRoot);
+  const resolved = path.resolve(root, ...segments);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) throw new Error('bundle: resource escapes the bundle root');
+  return resolved;
+}
+
+export async function readProfile(profilePath: string, bundleRoot?: string): Promise<ResolvedProfile> {
   const absolutePath = path.resolve(profilePath);
   const rawProfile = await readFile(absolutePath, 'utf8');
   const profile = validateProfile(JSON.parse(rawProfile));
+  const canonicalProfileDigest = profileDigest(profile);
   const lockPath = path.join(path.dirname(absolutePath), 'profile.lock.json');
   const lock = await readFile(lockPath, 'utf8').then((raw) => JSON.parse(raw) as Record<string, unknown>, (error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return null;
@@ -216,15 +234,13 @@ export async function readProfile(profilePath: string): Promise<ResolvedProfile>
   if (activeLock) {
     if (activeLock.schemaVersion !== 1 || activeLock.status !== 'frozen' || activeLock.profileId !== profile.id) throw new Error('profile lock identity is invalid');
     if (activeLock.profileFileSha256 !== sha256(rawProfile)) throw new Error('profile file does not match profile.lock.json');
-    if (activeLock.profileDigest !== profileDigest(profile)) throw new Error('profile digest does not match profile.lock.json');
+    if (activeLock.profileDigest !== canonicalProfileDigest) throw new Error('profile digest does not match profile.lock.json');
     if (activeLock.agentBinaryVersion !== profile.agentBinaryVersion) throw new Error('profile Agent version does not match profile.lock.json');
     if (activeLock.cindyUpstreamCommit !== CINDY_UPSTREAM_COMMIT) throw new Error('profile lock Cindy upstream commit is stale');
   }
   // Profiles may travel with a release or checkout. Resolve relative binaries
   // beside the profile instead of depending on the caller's current directory.
-  if (!path.isAbsolute(profile.agentBinaryPath)) {
-    profile.agentBinaryPath = path.resolve(path.dirname(absolutePath), profile.agentBinaryPath);
-  }
+  profile.agentBinaryPath = resolveProfileResource(profile.agentBinaryPath, path.dirname(absolutePath), bundleRoot);
   const endpointOverride = profile.agentBackend === 'claude-code' || profile.agentBackend === 'pi'
     ? process.env.CINDY_HEADLESS_BASE_URL ?? process.env.ANTHROPIC_BASE_URL
     : undefined;
@@ -232,7 +248,7 @@ export async function readProfile(profilePath: string): Promise<ResolvedProfile>
   let systemPrompt: string | undefined;
   let systemPromptDigest: string | null = null;
   if (profile.systemPromptFile) {
-    const promptPath = path.resolve(path.dirname(absolutePath), profile.systemPromptFile);
+    const promptPath = resolveProfileResource(profile.systemPromptFile, path.dirname(absolutePath), bundleRoot);
     systemPrompt = await readFile(promptPath, 'utf8');
     systemPromptDigest = sha256(systemPrompt);
     if (profile.expectedSystemPromptDigest && profile.expectedSystemPromptDigest !== systemPromptDigest) throw new Error('system prompt digest does not match expectedSystemPromptDigest');
@@ -240,7 +256,7 @@ export async function readProfile(profilePath: string): Promise<ResolvedProfile>
     throw new Error('expectedSystemPromptDigest requires systemPromptFile');
   }
   if (activeLock && activeLock.systemPromptDigest !== systemPromptDigest) throw new Error('system prompt does not match profile.lock.json');
-  return { profile, profilePath: absolutePath, systemPrompt, profileDigest: profileDigest(profile), systemPromptDigest };
+  return { profile, profilePath: absolutePath, systemPrompt, profileDigest: canonicalProfileDigest, systemPromptDigest };
 }
 
 export async function doctor(resolved: ResolvedProfile, outputDir?: string): Promise<{ ok: true; checks: Record<string, string | boolean> }> {

@@ -64,6 +64,8 @@ async function main(): Promise<void> {
       maxOutputTokens: positiveNumberFlag('--max-output-tokens'),
       mcpServers,
       effort: effortFlag(),
+      gatewayModel: args.includes('--gateway-model'),
+      exactFeatures: args.includes('--exact-features'),
     });
     await mkdir(path.dirname(path.resolve(output)), { recursive: true });
     await writeFile(output, JSON.stringify(profile, null, 2) + '\n', 'utf8');
@@ -72,7 +74,7 @@ async function main(): Promise<void> {
   }
   if (command === 'doctor' || command === 'verify-agent' || command === 'compatibility-report' || command === 'capabilities' || command === 'profile') {
     if (command === 'profile' && args[1] !== 'validate') throw new Error('usage: profile validate --profile <file> or profile generate --manifest <file> --harness <name> --output <file>');
-    const resolved = await readProfile(requireFlag('--profile'));
+    const resolved = await readProfile(requireFlag('--profile'), flag('--bundle-dir'));
     if (command === 'capabilities') console.log(JSON.stringify({ ...capabilities(resolved.profile), capabilityCatalog: capabilityCatalog(resolved.profile.agentBackend), profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest }, null, 2));
     else if (command === 'compatibility-report') console.log(JSON.stringify({ ...compatibilityReport(resolved.profile), profileDigest: resolved.profileDigest, systemPromptDigest: resolved.systemPromptDigest }, null, 2));
     else if (command === 'doctor' || command === 'verify-agent') console.log(JSON.stringify(await doctor(resolved, flag('--output-dir')), null, 2));
@@ -87,7 +89,7 @@ async function main(): Promise<void> {
     if (!Array.isArray(turns) || turns.length === 0) throw new Error('--turns-file must contain a non-empty turn array');
     turns.forEach(validateTurnInput);
     const timeout = resolveHeadlessTimeout(flag('--timeout-owner'), flag('--timeout-ms'));
-    const result = await runTask(await readProfile(requireFlag('--profile')), task, flag('--working-dir') ?? process.cwd(), flag('--output-dir') ?? './results', timeout.timeoutMs, turns);
+    const result = await runTask(await readProfile(requireFlag('--profile'), flag('--bundle-dir')), task, flag('--working-dir') ?? process.cwd(), flag('--output-dir') ?? './results', timeout.timeoutMs, turns);
     console.log(JSON.stringify(result, null, 2));
     if (String(result.status ?? '').startsWith('infra-')) process.exitCode = 1;
     return;
