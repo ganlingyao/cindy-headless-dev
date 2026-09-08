@@ -2,10 +2,15 @@
 
 Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-core` and MCP contracts, then exposes the Claude Code, Codex, and Pi harnesses through a CLI and a Harbor `BaseAgent` adapter. It does not recreate Cindy Desktop, Electron UI, or the Agent binaries.
 
-Version `0.3.1` is based on Cindy upstream commit `b91b78c507a6605bb631ad6e85bf82d94d71efd2`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
+Version `0.3.2` is based on Cindy upstream commit `b91b78c507a6605bb631ad6e85bf82d94d71efd2`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
 
 The current feature-by-feature parity inventory is maintained in
 [`CINDY_FEATURE_PARITY.md`](CINDY_FEATURE_PARITY.md).
+
+For the complete Chinese maintenance procedure, including how to diff a user's
+local Cindy checkout from the last synchronized Cindy revision, exclude
+Desktop-only changes, port runtime capabilities, and build a formal bundle,
+see [`UPDATE_AND_PACKAGE.zh-CN.md`](UPDATE_AND_PACKAGE.zh-CN.md).
 
 ## Quick start
 
@@ -90,6 +95,12 @@ recorded in `harbor-compatibility.json`.
 committed source state. `bundleMode: "development"` identifies a dirty local
 build. It is an identity field in the same bundle format, not a second package
 or archive workflow.
+
+Do not weaken this boundary for convenience. The normal user workflow produces
+a formal bundle from a local checkpoint commit; that commit does not need to be
+pushed or merged. A dirty checkout is supported only for diagnostic builds by
+setting `CINDY_HEADLESS_ALLOW_DIRTY_BUNDLE=1`, but a scored bundle must remain
+clean.
 
 ## CLI
 
@@ -185,6 +196,10 @@ check the required Harbor commit and adapter contract before a scored run.
 The `cindy-claude-parity-all-off` profile is a whole-surface parity control. Because it changes Maker Memory, project context, compaction and the Cindy system prompt together, it cannot attribute an outcome to any one dimension. Use a derived profile with exactly one declared `changedDimensions` entry for causal comparisons.
 
 ## Maintenance after Cindy updates
+
+The checklist below is the short policy summary. Follow
+[`UPDATE_AND_PACKAGE.zh-CN.md`](UPDATE_AND_PACKAGE.zh-CN.md) for exact commands,
+decision points, expected outputs, upload layout, and rollback rules.
 
 Treat Headless as a compatibility surface, not a floating checkout:
 

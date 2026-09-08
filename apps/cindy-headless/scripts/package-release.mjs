@@ -44,6 +44,7 @@ for (const item of ['prompt.md', 'codex-prompt.md', 'pi-prompt.md', 'bundle-mani
 await cp(path.join(appDir, 'profiles'), path.join(runtimeRoot, 'profiles'), { recursive: true });
 await cp(path.join(appDir, 'README.md'), path.join(runtimeRoot, 'README.md'));
 await cp(path.join(appDir, 'CINDY_FEATURE_PARITY.md'), path.join(runtimeRoot, 'CINDY_FEATURE_PARITY.md'));
+await cp(path.join(appDir, 'UPDATE_AND_PACKAGE.zh-CN.md'), path.join(runtimeRoot, 'UPDATE_AND_PACKAGE.zh-CN.md'));
 await cp(path.join(appDir, 'config.example.json'), path.join(runtimeRoot, 'config.example.json'));
 await mkdir(path.join(runtimeRoot, 'scripts'), { recursive: true });
 await cp(path.join(appDir, 'scripts', 'ensure-agent-binaries.mjs'), path.join(runtimeRoot, 'scripts', 'ensure-agent-binaries.mjs'));

@@ -1,0 +1,346 @@
+# Cindy Headless 同步与正式出包手册
+
+本文用于从用户已经更新完毕的本地 Cindy 仓库中识别产品变化、同步 Headless 能力，
+并直接生成可上传的 Linux x64 formal bundle。执行者可以是开发者，也可以是读取本文
+后操作仓库的 AI。
+
+Headless 必须保留在完整 Cindy checkout 的 `apps/cindy-headless` 中，因为构建会直接
+读取 `packages/maker-core`、MCP 契约和 Desktop 的共享 prompt 源。不要把该目录单独
+复制到一个脱离 Cindy 的空仓库中构建。
+
+## 1. 版本与同步基线
+
+Headless 记录两个不同版本：
+
+| 字段 | 位置 | 含义 |
+|---|---|---|
+| Headless 版本 | `apps/cindy-headless/package.json.version` | Headless CLI、Profile 和 artifact 契约版本 |
+| Cindy 同步基线 | `apps/cindy-headless/package.json.cindyUpstreamCommit` | 上一次完成 Headless 适配的 Cindy 产品代码 commit |
+
+`cindyUpstreamCommit` 是快速检测 Cindy diff 的唯一机器可读游标，必须是完整 40 位
+Git SHA。不要只记录分支名、日期或语义版本；它们不能唯一标识源码。发布说明可以
+额外记录 Cindy tag，但 commit SHA 才是构建与审计依据。
+
+bundle manifest 还记录构建时整个 checkout 的 `cindyCommit`、Headless 版本、dirty
+状态，以及 CLI、prompt、profile、lockfile 和 binary 摘要。因此不需要再创建第二份
+容易漂移的“上次同步版本”文件。
+
+## 2. 准备用户的 Cindy checkout
+
+用户可以在任意本地功能分支操作，不要求先合并或 push。在仓库根目录执行：
+
+```powershell
+$headlessPackage = Get-Content apps/cindy-headless/package.json | ConvertFrom-Json
+$oldCindy = $headlessPackage.cindyUpstreamCommit
+$newCindy = git rev-parse HEAD
+
+git status --short
+git branch --show-current
+git show -s --format='%H %cI %s' $oldCindy
+git show -s --format='%H %cI %s' $newCindy
+node --version
+pnpm --version
+```
+
+前置要求：
+
+- Node.js 22 或更高版本；
+- `oldCindy` 和 `newCindy` 都能由 Git 解析；
+- 明确当前未提交修改属于谁，不得 reset、checkout 或覆盖用户文件；
+- `apps/cindy-headless`、`packages/maker-core`、Desktop prompt 源存在；
+- 已执行 `pnpm install --frozen-lockfile`，或已审查用户主动更新的 lockfile；
+- 构建机器能取得锁定版本的 Linux x64 Node、Claude Code、Codex 和完整 Pi runtime。
+
+如果 Cindy 新功能尚未提交，先创建本地 checkpoint commit。它不需要推送：
+
+```powershell
+git add <本次已审查的-Cindy-文件>
+git commit -s -m "feat: checkpoint Cindy changes for Headless sync"
+$newCindy = git rev-parse HEAD
+```
+
+不要使用 `git add -A`，避免把其他工作一并提交。
+
+## 3. 生成 Cindy 更新清单
+
+先确认提交关系。如果旧基线不是新提交的祖先，通常表示 rebase、切错分支或基线填写
+错误，不能直接继续：
+
+```powershell
+git merge-base --is-ancestor $oldCindy $newCindy
+if ($LASTEXITCODE -ne 0) {
+  throw '旧 Cindy 基线不是当前 Cindy 的祖先，请确认分支或使用 merge-base 人工审计'
+}
+```
+
+生成提交和文件总览：
+
+```powershell
+git log --oneline --decorate $oldCindy..$newCindy
+git diff --stat $oldCindy..$newCindy
+git diff --name-status $oldCindy..$newCindy > cindy-headless-sync-files.txt
+```
+
+再按影响面分组检查：
+
+```powershell
+# Agent API、事件、usage、compaction、模型和运行行为
+git diff $oldCindy..$newCindy -- packages/maker-core/src/agents
+
+# Memory、MCP、project context 和共享协议
+git diff $oldCindy..$newCindy -- `
+  packages/maker-core/src/memory `
+  packages/maker-core/src/mcp `
+  packages/mcps
+
+# Headless 使用的 Desktop prompt 与 host 编排线索
+git diff $oldCindy..$newCindy -- apps/desktop/src/main/maker-host
+
+# Harness binary 版本、下载地址和 SHA256
+git diff $oldCindy..$newCindy -- tools/claude tools/codex tools/pi
+
+# 依赖和 workspace 契约
+git diff $oldCindy..$newCindy -- package.json pnpm-lock.yaml pnpm-workspace.yaml
+```
+
+路径可能随 Cindy 演进变化。如果路径不存在或 diff 为空，用符号搜索继续定位：
+
+```powershell
+rg -n "AgentEvent|Usage|compaction|projectContext|makerMemory|nativeMemory" `
+  packages apps/desktop/src/main
+rg -n "system-prompt|Mcp|attachment|provider|contextLimit|effort" `
+  packages apps/desktop/src/main
+```
+
+审计记录至少包含：commit、变更文件、相关符号、Headless 分类、修改位置和测试。临时
+`cindy-headless-sync-files.txt` 在审计结束后删除，不应提交。
+
+## 4. 判断哪些内容进入 Headless
+
+不要按“文件位于 Desktop”机械判断。应按能力能否在无 UI、无人值守容器中表达判断。
+
+### 直接同步或适配
+
+- Agent 构造参数、生命周期、事件和 terminal status；
+- 模型/provider/effort/context limit 与 compaction；
+- token、cache、cost 和错误分类；
+- Maker Memory、MCP、project context；
+- Claude Code、Codex、Pi 的启动和协议；
+- 系统 prompt 的产品行为约束；
+- attachment、Skills、remote MCP 等可冻结的非交互能力。
+
+Headless 应直接调用更新后的 `maker-core` API，不要复制一套 core 实现。
+
+### 提取语义后适配
+
+以下内容可能位于 Desktop，但不能直接丢弃：共享系统 prompt；UI 操作最终传给 Agent
+的配置、模型或权限；影响 Agent 行为的默认值；Desktop 组装的 Memory、MCP 或
+project-context 输入。
+
+只提取“最终传给 Agent 的数据和规则”，在 Profile/Headless host 中用确定、可冻结、
+无交互的形式表达。不要复制 Electron IPC、React state 或窗口生命周期。
+
+### 直接剔除
+
+- React 页面、窗口、面板、菜单、托盘和通知；
+- Electron IPC、渲染进程状态和 OS UI 权限向导；
+- 登录界面、OAuth 弹窗、更新器和埋点展示；
+- 手机、语音、媒体预览和人工确认交互；
+- 仅用于展示且不改变 Agent 输入或执行的格式化逻辑。
+
+剔除不等于忘记。若它被视为 Cindy 功能，应在 `CINDY_FEATURE_PARITY.md` 的
+Desktop-only 区域记录原因。
+
+### 分类结论
+
+| 分类 | 判断 | 操作 |
+|---|---|---|
+| `COMPATIBLE` | 现有 Headless 已覆盖，契约不变 | 更新基线并回归测试 |
+| `HEADLESS_UPDATE` | 可无 UI 使用，但 Headless 尚未暴露或记录 | 修改 Headless 并添加测试 |
+| `ADAPTER_UPDATE` | 启动参数、挂载、环境变量或 artifact schema 变化 | 同步 Adapter 后才能跑测 |
+| `UNSUPPORTED` | 无法脱离 UI、账号、设备或人工批准 | 不实现，记录限制 |
+
+仅在 Cindy 新增功能，不代表它会自动出现在上传服务。成为可选择能力必须同时满足：
+
+1. Headless 能开启或关闭；
+2. Profile schema 能表达并 fail closed；
+3. `capabilityCatalog` 声明 harness 支持范围和默认值；
+4. Adapter 能传递所需数据；
+5. identity/config/result/trace 能证明实际状态；
+6. 存在 on、off 和非法组合的契约测试。
+
+## 5. 把 Cindy 能力加入 Headless
+
+| 位置 | 责任 |
+|---|---|
+| `src/host.ts` | 建立会话、注入能力、执行和 evidence |
+| `src/profile.ts` | Profile schema、默认值、互斥关系和 fail-closed 校验 |
+| `src/profile-generation.ts` | capability 选择到动态 Profile 的确定性映射 |
+| `src/compatibility.ts` | 支持状态和不兼容原因 |
+| `scripts/build-linux-bundle.mjs` | bundle 内容与 `capabilityCatalog` |
+| `profiles/**` | 少量长期生产基线，不为每种组合创建静态 Profile |
+| `CINDY_FEATURE_PARITY.md` | 已支持、待适配和 Desktop-only 清单 |
+| `harbor-compatibility.json` | Adapter 契约版本和摘要 |
+
+实现顺序：
+
+1. 更新 `maker-core` 调用，使已有 Headless 行为恢复正确；
+2. 为新能力增加 Profile 字段和严格校验；
+3. 在 host 中映射到实际 Cindy API；
+4. 在 artifact 中记录 requested 与 effective 状态；
+5. 加入对应 harness 的 catalog，明确默认值；
+6. 增加开启、关闭和非法组合测试；
+7. 更新 parity 文档；
+8. 只有外部执行契约变化时才更新 Adapter。
+
+普通 bundle、prompt 或现有 Profile 字段更新不要求修改 Adapter。新 harness 协议，或
+需要新挂载、secret、参数、artifact 的 feature，通常必须修改 Adapter。
+
+## 6. 更新版本记录
+
+完成审计和适配后，把 `package.json.cindyUpstreamCommit` 更新为 `$newCindy`。该 SHA
+应指向用户 Cindy 功能完成的 commit，通常是 Headless 适配提交的父提交或祖先。使用
+结构化 JSON 工具或补丁修改，不要用不受控字符串替换。
+
+Headless `version` 的建议：
+
+- 仅同步内部 Cindy 修复且对外契约不变：至少 bump patch 后发布；
+- Profile、catalog 或 artifact 增加向后兼容字段：bump minor；
+- 删除、重命名或改变现有 CLI/Profile/artifact 语义：bump major；
+- 同一 Headless version 不应对应多个进入正式跑测的不同 bundle。
+
+确认没有残留旧基线：
+
+```powershell
+rg -n $oldCindy apps/cindy-headless
+rg -n 'cindyUpstreamCommit' apps/cindy-headless
+```
+
+更新源码中的 package metadata、profile lock、compatibility 和文档；不要手工修改生成
+的 `bundle-manifest.json`。
+
+## 7. 定向验证
+
+普通 Headless 更新不要运行全仓 `test:unit:related`，它会启动 Desktop、Mobile 和
+大量无关 workspace。执行：
+
+```powershell
+pnpm --filter cindy-headless verify
+```
+
+若 Cindy 变化影响共享 `maker-core`，再补充运行直接受影响 package 的定向测试，不要
+默认执行所有 Desktop 测试。重点覆盖 prompt parity、三种 harness、Profile 动态生成、
+project context、Memory、usage、timeout、compatibility 和新功能 on/off/invalid。
+
+## 8. 提交本地适配
+
+formal bundle 必须来自 clean commit，但不要求 push：
+
+```powershell
+git status --short
+git diff --check
+git add <已审查的-Headless-文件>
+git commit -s -m "feat(headless): sync Cindy <功能或基线>"
+git status --short
+```
+
+最后一条必须没有输出。不要提交本地配置、API Key、运行结果、临时 diff 清单或临时
+Profile。
+
+## 9. 生成正式包
+
+```powershell
+pnpm --filter cindy-headless bundle:linux
+pnpm --filter cindy-headless verify:bundle
+pnpm --filter cindy-headless package:full
+pnpm --filter cindy-headless verify:distribution:full
+```
+
+脚本默认下载并校验锁定的 binary，也可以通过 `CINDY_CLAUDE_BINARY`、
+`CINDY_CODEX_BINARY`、`CINDY_PI_BINARY` 指向已缓存的 Linux x64 版本。
+
+检查身份：
+
+```powershell
+$manifestPath = 'apps/cindy-headless/bundle/linux-x64/bundle-manifest.json'
+$manifest = Get-Content $manifestPath | ConvertFrom-Json
+$builtFrom = git rev-parse HEAD
+
+if ($manifest.bundleMode -ne 'formal') { throw 'bundle is not formal' }
+if ($manifest.sourceDirty -ne $false) { throw 'bundle source is dirty' }
+if ($manifest.cindyCommit -ne $builtFrom) { throw 'bundle was built from another commit' }
+if ($manifest.cindyUpstreamCommit -ne $newCindy) { throw 'Cindy baseline mismatch' }
+Get-Content apps/cindy-headless/release/SHA256SUMS
+```
+
+用户直接上传的文件是：
+
+```text
+apps/cindy-headless/release/cindy-headless-linux-x64-full-<version>.tar.gz
+```
+
+`full` 包包含 Node 和三个 harness runtime；`runtime` 包不包含 vendor harness binaries。
+分发 full 包前必须确认第三方许可。
+
+构建会更新被跟踪的 manifest，审查后单独提交：
+
+```powershell
+git diff -- apps/cindy-headless/bundle/linux-x64/bundle-manifest.json
+git add apps/cindy-headless/bundle/linux-x64/bundle-manifest.json
+git commit -s -m "build(headless): freeze verified linux bundle"
+```
+
+manifest 的 `cindyCommit` 指向实际构建源码提交，而不是随后仅冻结 manifest 的提交，
+这是预期行为。
+
+## 10. Dirty worktree 策略
+
+主流程是 formal 出包，不应默认允许 dirty。个人分支上的本地 checkpoint commit 已经
+足够，不要求 push。只有排查尚未完成的适配时才允许：
+
+```powershell
+$env:CINDY_HEADLESS_ALLOW_DIRTY_BUNDLE = '1'
+pnpm --filter cindy-headless bundle:linux
+Remove-Item Env:CINDY_HEADLESS_ALLOW_DIRTY_BUNDLE
+```
+
+该产物会标记 `bundleMode=development`、`sourceDirty=true`，只能说明当前文件可以构建，
+不得作为用户默认出包或正式评分产物。
+
+## 11. 最终清单
+
+- `cindyUpstreamCommit` 等于本次审计的新 Cindy commit；
+- Cindy diff 每项能力已归类，Desktop-only 代码没有复制进 Headless；
+- 新能力具备 Profile 控制、catalog 声明、运行证据和测试；
+- Adapter 契约变化已更新兼容性记录；
+- Headless 定向验证、bundle 和 full distribution 验证全部通过；
+- manifest 为 `formal`、`sourceDirty=false`；
+- bundle/Cindy commit 及 prompt/profile/binary 摘要齐全；
+- full archive SHA256 已记录；
+- 包内没有本地配置、API Key、临时 Profile 或运行结果。
+
+## 12. 常见错误
+
+### 旧基线不是当前 HEAD 的祖先
+
+确认分支和 rebase 历史。必要时用 `git merge-base $oldCindy $newCindy` 找共同基线并
+分别审计两侧；不要直接改基线来掩盖遗漏。
+
+### 新 Cindy 功能没有出现在 catalog
+
+仅更新 `maker-core` 不会自动发布跑测能力。补齐 Profile schema、host 映射、artifact
+证据、catalog 和测试。
+
+### Desktop 中的功能是否全部删除
+
+不是。UI、IPC 和窗口代码剔除；最终影响 Agent 输入和行为的配置、prompt、Memory
+或 project-context 语义，需要提取并以无 UI、可冻结形式实现。
+
+### Refusing to build a scored bundle from a dirty worktree
+
+审查修改并创建本地 checkpoint commit，再重新构建。这不要求 push。
+
+### Cindy upstream commit mismatch
+
+更新 package metadata、profile lock、兼容性记录后重新运行测试与 `bundle:linux`；
+不要手工修改生成的 manifest 绕过校验。

@@ -1,7 +1,7 @@
 import type { HeadlessProfile } from './profile.js';
 
 export const HEADLESS_CONTRACT_VERSION = 1;
-export const CINDY_HEADLESS_VERSION = '0.3.1';
+export const CINDY_HEADLESS_VERSION = '0.3.2';
 export const CINDY_UPSTREAM_COMMIT = 'b91b78c507a6605bb631ad6e85bf82d94d71efd2';
 
 export interface HeadlessFeatureCapability {

@@ -68,6 +68,7 @@ try {
   assert.ok((await stat(path.join(root, 'bin', 'pi', 'pi'))).size > 0);
   assert.ok((await stat(path.join(root, 'bin', 'node'))).size > 0);
   await readFile(path.join(root, 'VENDOR-BINARIES-NOTICE.txt'));
+  await readFile(path.join(root, 'UPDATE_AND_PACKAGE.zh-CN.md'));
   await readFile(path.join(root, 'prepare-binaries.sh'));
   let cliPath = path.join(root, 'dist', 'cli.cjs');
   if (process.platform === 'win32') {
