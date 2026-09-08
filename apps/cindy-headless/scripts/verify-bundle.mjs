@@ -62,8 +62,8 @@ if (discovered.harnesses?.some((item) => item.status !== 'SUPPORTED')) throw new
 for (const harness of ['claude-code', 'codex', 'pi']) {
   const generated = `.verify/profile-${harness}.json`;
   await runBundleBinary('node', ['dist/cli.cjs', 'profile', 'generate', '--manifest', 'bundle-manifest.json', '--harness', harness, '--output', generated]);
-  await runBundleBinary('node', ['dist/cli.cjs', 'profile', 'validate', '--profile', generated]);
-  await runBundleBinary('node', ['dist/cli.cjs', 'compatibility-report', '--profile', generated]);
+  await runBundleBinary('node', ['dist/cli.cjs', 'profile', 'validate', '--profile', generated, '--bundle-dir', '.']);
+  await runBundleBinary('node', ['dist/cli.cjs', 'compatibility-report', '--profile', generated, '--bundle-dir', '.']);
 }
 await rm(path.join(bundleDir, '.verify'), { recursive: true, force: true });
 for (const profile of [
@@ -71,7 +71,7 @@ for (const profile of [
   'profiles/cindy-production-codex/profile.example.json',
   'profiles/cindy-production-pi/profile.example.json',
 ]) {
-  await runBundleBinary('node', ['dist/cli.cjs', 'profile', 'validate', '--profile', profile]);
+  await runBundleBinary('node', ['dist/cli.cjs', 'profile', 'validate', '--profile', profile, '--bundle-dir', '.']);
 }
 await runBundleBinary('node', ['dist/eval-cli.cjs']).catch((error) => {
   if (error.code !== 2 && error.status !== 2) throw error;
