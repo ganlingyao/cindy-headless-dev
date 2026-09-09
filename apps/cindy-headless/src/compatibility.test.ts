@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { assertSafeExecutionProfile, capabilityCatalog, CINDY_HEADLESS_VERSION, CINDY_UPSTREAM_COMMIT, compatibilityReport, discoverCapabilityCatalog } from './compatibility.js';
+import registry from '../capability-registry.json';
+import { assertSafeExecutionProfile, capabilityCatalog, CINDY_HEADLESS_VERSION, CINDY_UPSTREAM_COMMIT, compatibilityReport, discoverCapabilityCatalog, validateCapabilityRegistry } from './compatibility.js';
 import { validateProfile } from './profile.js';
 
 const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -20,11 +21,18 @@ const base = {
 } as const;
 
 describe('headless compatibility contract', () => {
+  it('validates the single-source capability registry and rejects dangling harness features', () => {
+    expect(() => validateCapabilityRegistry(registry)).not.toThrow();
+    const invalid = structuredClone(registry) as unknown as { harnesses: { codex: { features: string[] } } };
+    invalid.harnesses.codex.features.push('unregisteredFeature');
+    expect(() => validateCapabilityRegistry(invalid)).toThrow('invalid capability registry harness');
+  });
   it('publishes a stable web-discovery capability catalog', () => {
     const catalog = capabilityCatalog('claude-code');
     expect(catalog.contractVersion).toBe(1);
     expect(catalog.harnesses).toEqual([{ id: 'cindy-claude', backend: 'claude-code', features: ['projectContext', 'makerMemory', 'nativeMemory', 'compaction', 'attachments', 'remoteHttpMcp'], adapterSupported: true }]);
-    expect(catalog.features.projectContext).toEqual({ type: 'boolean', control: 'profile', default: false });
+    expect(catalog.features.projectContext).toMatchObject({ type: 'boolean', control: 'profile', default: false, label: 'Project Context' });
+    expect(catalog.constraints).toEqual([{ type: 'mutuallyExclusive', features: ['makerMemory', 'nativeMemory'], offLabel: '关闭 Memory' }]);
   });
 
   it('advertises Cindy memory controls for Pi while keeping the backend identity', () => {

@@ -36,6 +36,19 @@ const DEFAULT_MODELS: Record<keyof typeof HARNESS_FILES, HeadlessProfile['model'
   pi: { provider: 'cindy', requestedId: 'claude-sonnet-4-6', contextLimit: 200_000, maxOutputTokens: 32_000, effort: 'high' },
 };
 
+// This is implementation coverage, not a second capability catalog. Adding a
+// registry entry without teaching the generator how to materialize it must fail
+// closed instead of being advertised and silently ignored.
+export const PROFILE_GENERATION_FEATURES = new Set([
+  'projectContext', 'makerMemory', 'nativeMemory', 'compaction', 'attachments',
+  'piProjectSkills', 'remoteHttpMcp', 'nativeProviders',
+]);
+
+function assertGeneratorCoverage(catalog: HeadlessCapabilityCatalog): void {
+  const missing = Object.keys(catalog.features).filter((id) => !PROFILE_GENERATION_FEATURES.has(id));
+  if (missing.length) throw new Error(`DETECTED_BUT_UNSUPPORTED: profile generator has no implementation for ${missing.join(', ')}`);
+}
+
 function requireManifestString(manifest: BundleManifest, field: string): string {
   const value = manifest[field];
   if (typeof value !== 'string' || value.trim() === '') throw new Error(`bundle manifest is missing ${field}`);
@@ -54,6 +67,7 @@ function harnessEntry(catalog: HeadlessCapabilityCatalog, harness: string): Head
 export function generateProfileFromManifest(manifest: BundleManifest, options: ProfileGenerationOptions): HeadlessProfile {
   const discovered = discoverCapabilityCatalog(manifest.capabilityCatalog);
   const catalog = manifest.capabilityCatalog as HeadlessCapabilityCatalog;
+  assertGeneratorCoverage(catalog);
   const entry = harnessEntry(catalog, options.harness);
   const harness = options.harness as keyof typeof HARNESS_FILES;
   const selected = new Set(options.features ?? []);

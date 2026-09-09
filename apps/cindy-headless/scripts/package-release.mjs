@@ -40,7 +40,7 @@ await mkdir(runtimeRoot, { recursive: true });
 await cp(bundleDist, path.join(runtimeRoot, 'dist'), { recursive: true });
 await mkdir(path.join(runtimeRoot, 'bin'), { recursive: true });
 await cp(path.join(bundleDir, 'bin', 'node'), path.join(runtimeRoot, 'bin', 'node'));
-for (const item of ['prompt.md', 'codex-prompt.md', 'pi-prompt.md', 'bundle-manifest.json']) await cp(path.join(bundleDir, item), path.join(runtimeRoot, item), { recursive: true });
+for (const item of ['prompt.md', 'codex-prompt.md', 'pi-prompt.md', 'bundle-manifest.json', 'capability-registry.json']) await cp(path.join(bundleDir, item), path.join(runtimeRoot, item), { recursive: true });
 await cp(path.join(appDir, 'profiles'), path.join(runtimeRoot, 'profiles'), { recursive: true });
 await cp(path.join(appDir, 'README.md'), path.join(runtimeRoot, 'README.md'));
 await cp(path.join(appDir, 'CINDY_FEATURE_PARITY.md'), path.join(runtimeRoot, 'CINDY_FEATURE_PARITY.md'));

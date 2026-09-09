@@ -1,4 +1,5 @@
 import type { HeadlessProfile } from './profile.js';
+import registry from '../capability-registry.json';
 
 export const HEADLESS_CONTRACT_VERSION = 1;
 export const CINDY_HEADLESS_VERSION = '0.3.2';
@@ -8,6 +9,20 @@ export interface HeadlessFeatureCapability {
   type: 'boolean' | 'object' | 'array';
   control: 'profile';
   default: boolean | Record<string, unknown> | unknown[];
+  label?: string;
+  description?: string;
+}
+
+export interface HeadlessControlCapability {
+  type: string;
+  control: string;
+  [key: string]: unknown;
+}
+
+export interface HeadlessCapabilityConstraint {
+  type: 'mutuallyExclusive';
+  features: string[];
+  offLabel?: string;
 }
 
 export interface HeadlessHarnessCapability {
@@ -24,19 +39,41 @@ export interface HeadlessCapabilityCatalog {
   contractVersion: number;
   harnesses: HeadlessHarnessCapability[];
   features: Record<string, HeadlessFeatureCapability>;
+  controls: Record<string, HeadlessControlCapability>;
   defaultValues: Record<string, boolean | Record<string, unknown> | unknown[]>;
+  constraints?: HeadlessCapabilityConstraint[];
 }
 
-const FEATURE_CAPABILITIES: Record<string, HeadlessFeatureCapability> = {
-  projectContext: { type: 'boolean', control: 'profile', default: false },
-  makerMemory: { type: 'boolean', control: 'profile', default: false },
-  nativeMemory: { type: 'boolean', control: 'profile', default: false },
-  compaction: { type: 'object', control: 'profile', default: { enabled: true, thresholdPct: 80 } },
-  attachments: { type: 'boolean', control: 'profile', default: false },
-  piProjectSkills: { type: 'boolean', control: 'profile', default: false },
-  remoteHttpMcp: { type: 'array', control: 'profile', default: [] },
-  nativeProviders: { type: 'array', control: 'profile', default: [] },
-};
+const FEATURE_CAPABILITIES = registry.features as Record<string, HeadlessFeatureCapability>;
+const CONTROL_CAPABILITIES = registry.controls as Record<string, HeadlessControlCapability>;
+
+export function validateCapabilityRegistry(value: unknown): asserts value is typeof registry {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('capability registry must be an object');
+  const candidate = value as Record<string, unknown>;
+  if (candidate.schemaVersion !== 1 || candidate.contractVersion !== HEADLESS_CONTRACT_VERSION) throw new Error('unsupported capability registry schema or contract');
+  if (!candidate.features || typeof candidate.features !== 'object' || Array.isArray(candidate.features)) throw new Error('capability registry features must be an object');
+  if (!candidate.controls || typeof candidate.controls !== 'object' || Array.isArray(candidate.controls)) throw new Error('capability registry controls must be an object');
+  if (!candidate.harnesses || typeof candidate.harnesses !== 'object' || Array.isArray(candidate.harnesses)) throw new Error('capability registry harnesses must be an object');
+  const features = candidate.features as Record<string, unknown>;
+  for (const [id, raw] of Object.entries(features)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`invalid capability registry feature: ${id}`);
+    const feature = raw as Record<string, unknown>;
+    if (!['boolean', 'object', 'array'].includes(String(feature.type)) || feature.control !== 'profile' || !Object.hasOwn(feature, 'default')) throw new Error(`invalid capability registry feature: ${id}`);
+  }
+  for (const [backend, raw] of Object.entries(candidate.harnesses as Record<string, unknown>)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`invalid capability registry harness: ${backend}`);
+    const harness = raw as Record<string, unknown>;
+    if (typeof harness.id !== 'string' || !Array.isArray(harness.features) || harness.features.some((id) => typeof id !== 'string' || !(id in features))) throw new Error(`invalid capability registry harness: ${backend}`);
+  }
+  if (!Array.isArray(candidate.constraints)) throw new Error('capability registry constraints must be an array');
+  for (const raw of candidate.constraints) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid capability registry constraint');
+    const constraint = raw as Record<string, unknown>;
+    if (constraint.type !== 'mutuallyExclusive' || !Array.isArray(constraint.features) || constraint.features.length < 2 || constraint.features.some((id) => typeof id !== 'string' || !(id in features))) throw new Error('invalid capability registry constraint');
+  }
+}
+
+validateCapabilityRegistry(registry);
 
 export const ADAPTER_FEATURES = new Set(Object.keys(FEATURE_CAPABILITIES));
 export const ADAPTER_HARNESSES = new Set<HeadlessProfile['agentBackend']>(['claude-code', 'codex', 'pi']);
@@ -45,18 +82,17 @@ export function capabilityCatalog(backend?: HeadlessProfile['agentBackend']): He
   const backends = backend ? [backend] : [...ADAPTER_HARNESSES];
   return {
     schemaVersion: 1,
-    contractVersion: HEADLESS_CONTRACT_VERSION,
+    contractVersion: registry.contractVersion,
     harnesses: backends.map((item) => ({
-      id: `cindy-${item === 'claude-code' ? 'claude' : item}`,
+      id: registry.harnesses[item].id,
       backend: item,
-      features: Object.keys(FEATURE_CAPABILITIES).filter((id) => {
-        if (id === 'piProjectSkills' || id === 'nativeProviders') return item === 'pi';
-        return true;
-      }),
+      features: registry.harnesses[item].features,
       adapterSupported: true,
     })),
     features: { ...FEATURE_CAPABILITIES },
+    controls: { ...CONTROL_CAPABILITIES },
     defaultValues: Object.fromEntries(Object.entries(FEATURE_CAPABILITIES).map(([id, feature]) => [id, feature.default])),
+    constraints: registry.constraints as HeadlessCapabilityConstraint[],
   };
 }
 
@@ -65,7 +101,9 @@ export interface CapabilityDetection {
   contractVersion: number;
   harnesses: Array<HeadlessHarnessCapability & { status: 'SUPPORTED' | 'DETECTED_BUT_UNSUPPORTED' }>;
   features: Record<string, HeadlessFeatureCapability>;
+  controls: Record<string, HeadlessControlCapability>;
   defaultValues: Record<string, boolean | Record<string, unknown> | unknown[]>;
+  constraints?: HeadlessCapabilityConstraint[];
   adapter: {
     understoodFeatures: string[];
     understoodHarnesses: string[];
@@ -79,6 +117,7 @@ export function discoverCapabilityCatalog(value: unknown): CapabilityDetection {
   const catalog = value as Partial<HeadlessCapabilityCatalog>;
   if (catalog.schemaVersion !== 1 || typeof catalog.contractVersion !== 'number') throw new Error('unsupported capabilityCatalog schema or contract');
   if (!catalog.features || typeof catalog.features !== 'object' || Array.isArray(catalog.features)) throw new Error('capabilityCatalog.features must be an object');
+  if (!catalog.controls || typeof catalog.controls !== 'object' || Array.isArray(catalog.controls)) throw new Error('capabilityCatalog.controls must be an object');
   if (!Array.isArray(catalog.harnesses)) throw new Error('capabilityCatalog.harnesses must be an array');
   const detected = Object.keys(catalog.features).map((id) => ({
     id,
@@ -98,7 +137,9 @@ export function discoverCapabilityCatalog(value: unknown): CapabilityDetection {
     contractVersion: catalog.contractVersion,
     harnesses,
     features: catalog.features,
+    controls: catalog.controls,
     defaultValues: catalog.defaultValues ?? {},
+    constraints: catalog.constraints ?? [],
     adapter: { understoodFeatures: [...ADAPTER_FEATURES], understoodHarnesses: [...ADAPTER_HARNESSES], detected },
     support: Object.fromEntries(detected.map((item) => [item.id, item.status])),
   };

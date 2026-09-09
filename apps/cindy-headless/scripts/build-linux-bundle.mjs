@@ -95,6 +95,9 @@ await writeFile(path.join(outputDir, 'codex-prompt.md'), codexPrompt, 'utf8');
 await writeFile(path.join(outputDir, 'pi-prompt.md'), piPrompt, 'utf8');
 await cp(path.join(appDir, 'profiles'), path.join(outputDir, 'profiles'), { recursive: true });
 const packageJson = JSON.parse(await readFile(path.join(appDir, 'package.json'), 'utf8'));
+const capabilityRegistryBytes = await readFile(path.join(appDir, 'capability-registry.json'));
+const capabilityRegistry = JSON.parse(capabilityRegistryBytes.toString('utf8'));
+await writeFile(path.join(outputDir, 'capability-registry.json'), capabilityRegistryBytes);
 if (!/^[0-9a-f]{40}$/.test(packageJson.cindyUpstreamCommit ?? '')) throw new Error('package.json must declare a full cindyUpstreamCommit');
 async function digestTree(directory) {
   const hash = createHash('sha256');
@@ -124,31 +127,14 @@ const [{ stdout: commit }, { stdout: commitDate }, lockfile, cliBytes, evalCliBy
   digestTree(piRuntimeDir),
   digestTree(path.join(outputDir, 'profiles')),
 ]);
-const supportedFeatures = ['projectContext', 'makerMemory', 'nativeMemory', 'compaction', 'attachments', 'piProjectSkills', 'remoteHttpMcp', 'nativeProviders'];
-const featureDefaults = {
-  projectContext: false,
-  makerMemory: false,
-  nativeMemory: false,
-  compaction: { enabled: true, thresholdPct: 80 }, attachments: false, piProjectSkills: false, remoteHttpMcp: [], nativeProviders: [],
-};
-const adapterFeatureSupport = {
-  'claude-code': supportedFeatures.filter((id) => id !== 'piProjectSkills' && id !== 'nativeProviders'),
-  codex: supportedFeatures.filter((id) => id !== 'piProjectSkills' && id !== 'nativeProviders'),
-  pi: supportedFeatures,
-};
-const harnessCapability = (id, backend, supportedModelIds, defaultModel) => {
-  const features = adapterFeatureSupport[backend] ?? [];
-  return { id, backend, features, adapterSupported: features.length > 0 && features.every((feature) => supportedFeatures.includes(feature)), supportedModelIds, defaultModel };
-};
+const supportedFeatures = Object.keys(capabilityRegistry.features);
 const capabilityCatalog = {
-  schemaVersion: 1,
-  contractVersion: 1,
-  harnesses: [
-    harnessCapability('cindy-claude', 'claude-code', ['claude-sonnet-4-6'], { provider: 'anthropic', requestedId: 'claude-sonnet-4-6', effort: 'high' }),
-    harnessCapability('cindy-codex', 'codex', ['gpt-5.4-mini'], { provider: 'openai', requestedId: 'gpt-5.4-mini', effort: 'high' }),
-    harnessCapability('cindy-pi', 'pi', ['claude-sonnet-4-6'], { provider: 'cindy', requestedId: 'claude-sonnet-4-6', contextLimit: 200000, maxOutputTokens: 32000, effort: 'high' }),
-  ],
-  features: Object.fromEntries(supportedFeatures.map((id) => [id, { type: id === 'compaction' ? 'object' : Array.isArray(featureDefaults[id]) ? 'array' : 'boolean', control: 'profile', default: featureDefaults[id] }])),
-  defaultValues: Object.fromEntries(supportedFeatures.map((id) => [id, featureDefaults[id]])),
+  schemaVersion: capabilityRegistry.schemaVersion,
+  contractVersion: capabilityRegistry.contractVersion,
+  harnesses: Object.entries(capabilityRegistry.harnesses).map(([backend, definition]) => ({ ...definition, backend, adapterSupported: true })),
+  features: capabilityRegistry.features,
+  controls: capabilityRegistry.controls,
+  defaultValues: Object.fromEntries(supportedFeatures.map((id) => [id, capabilityRegistry.features[id].default])),
+  constraints: capabilityRegistry.constraints,
 };
-await writeFile(path.join(outputDir, 'bundle-manifest.json'), JSON.stringify({ schemaVersion: 5, headlessContractVersion: 1, bundleMode: sourceDirty ? 'development' : 'formal', capabilityCatalog, cindyHeadlessVersion: packageJson.version, cindyUpstreamCommit: packageJson.cindyUpstreamCommit, cindyCommit: commit.trim(), sourceDirty, lockfileDigest: sha256(lockfile), cliDigest: sha256(cliBytes), evalCliDigest: sha256(evalCliBytes), profilesDigest, systemPromptDigest: sha256(productionPrompt), codexSystemPromptDigest: sha256(codexPrompt), piSystemPromptDigest: sha256(piPrompt), nodeBinaryDigest: sha256(nodeBinaryBytes), nodeVersion: nodeMetadata.version, claudeBinaryDigest: sha256(binaryBytes), codexBinaryDigest: sha256(codexBinaryBytes), piBinaryDigest: sha256(piBinaryBytes), piRuntimeDigest, claudeCodeVersion: latest.version, codexVersion: codexLatest.version, piVersion: piLatest.version, observedClaudeVersion, observedCodexVersion, observedPiVersion, platform: 'linux-x64', generatedAt: commitDate.trim() }, null, 2) + '\n');
+await writeFile(path.join(outputDir, 'bundle-manifest.json'), JSON.stringify({ schemaVersion: 5, headlessContractVersion: 1, bundleMode: sourceDirty ? 'development' : 'formal', capabilityCatalog, capabilityRegistryDigest: sha256(capabilityRegistryBytes), cindyHeadlessVersion: packageJson.version, cindyUpstreamCommit: packageJson.cindyUpstreamCommit, cindyCommit: commit.trim(), sourceDirty, lockfileDigest: sha256(lockfile), cliDigest: sha256(cliBytes), evalCliDigest: sha256(evalCliBytes), profilesDigest, systemPromptDigest: sha256(productionPrompt), codexSystemPromptDigest: sha256(codexPrompt), piSystemPromptDigest: sha256(piPrompt), nodeBinaryDigest: sha256(nodeBinaryBytes), nodeVersion: nodeMetadata.version, claudeBinaryDigest: sha256(binaryBytes), codexBinaryDigest: sha256(codexBinaryBytes), piBinaryDigest: sha256(piBinaryBytes), piRuntimeDigest, claudeCodeVersion: latest.version, codexVersion: codexLatest.version, piVersion: piLatest.version, observedClaudeVersion, observedCodexVersion, observedPiVersion, platform: 'linux-x64', generatedAt: commitDate.trim() }, null, 2) + '\n');

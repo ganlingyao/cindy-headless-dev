@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { capabilityCatalog } from './compatibility.js';
-import { generateProfileFromManifest } from './profile-generation.js';
+import { generateProfileFromManifest, PROFILE_GENERATION_FEATURES } from './profile-generation.js';
 import { readProfile, sha256 } from './profile.js';
 
 const temporaryDirectories: string[] = [];
@@ -34,6 +34,17 @@ async function fixture() {
 afterEach(async () => Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))));
 
 describe('profile generation', () => {
+  it('has an explicit implementation for every registered feature', () => {
+    expect([...PROFILE_GENERATION_FEATURES].sort()).toEqual(Object.keys(capabilityCatalog().features).sort());
+  });
+
+  it('fails closed when a manifest advertises a feature without a generator implementation', async () => {
+    const { manifest, manifestPath } = await fixture();
+    manifest.capabilityCatalog.features.futureFeature = { type: 'boolean', control: 'profile', default: false };
+    manifest.capabilityCatalog.defaultValues.futureFeature = false;
+    manifest.capabilityCatalog.harnesses[0]!.features.push('futureFeature');
+    expect(() => generateProfileFromManifest(manifest, { manifestPath, outputPath: 'unused.json', harness: 'claude-code', features: ['futureFeature'] })).toThrow('profile generator has no implementation');
+  });
   for (const harness of ['claude-code', 'codex', 'pi'] as const) {
     it(`generates and validates a ${harness} profile using bundle-relative assets`, async () => {
       const { root, manifest, manifestPath } = await fixture();

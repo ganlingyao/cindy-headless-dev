@@ -1,14 +1,13 @@
 {
   "schemaVersion": 5,
   "headlessContractVersion": 1,
-  "bundleMode": "formal",
+  "bundleMode": "development",
   "capabilityCatalog": {
     "schemaVersion": 1,
     "contractVersion": 1,
     "harnesses": [
       {
         "id": "cindy-claude",
-        "backend": "claude-code",
         "features": [
           "projectContext",
           "makerMemory",
@@ -17,7 +16,6 @@
           "attachments",
           "remoteHttpMcp"
         ],
-        "adapterSupported": true,
         "supportedModelIds": [
           "claude-sonnet-4-6"
         ],
@@ -25,11 +23,12 @@
           "provider": "anthropic",
           "requestedId": "claude-sonnet-4-6",
           "effort": "high"
-        }
+        },
+        "backend": "claude-code",
+        "adapterSupported": true
       },
       {
         "id": "cindy-codex",
-        "backend": "codex",
         "features": [
           "projectContext",
           "makerMemory",
@@ -38,7 +37,6 @@
           "attachments",
           "remoteHttpMcp"
         ],
-        "adapterSupported": true,
         "supportedModelIds": [
           "gpt-5.4-mini"
         ],
@@ -46,11 +44,12 @@
           "provider": "openai",
           "requestedId": "gpt-5.4-mini",
           "effort": "high"
-        }
+        },
+        "backend": "codex",
+        "adapterSupported": true
       },
       {
         "id": "cindy-pi",
-        "backend": "pi",
         "features": [
           "projectContext",
           "makerMemory",
@@ -61,7 +60,6 @@
           "remoteHttpMcp",
           "nativeProviders"
         ],
-        "adapterSupported": true,
         "supportedModelIds": [
           "claude-sonnet-4-6"
         ],
@@ -71,24 +69,32 @@
           "contextLimit": 200000,
           "maxOutputTokens": 32000,
           "effort": "high"
-        }
+        },
+        "backend": "pi",
+        "adapterSupported": true
       }
     ],
     "features": {
       "projectContext": {
         "type": "boolean",
         "control": "profile",
-        "default": false
+        "default": false,
+        "label": "Project Context",
+        "description": "Inject the current project context"
       },
       "makerMemory": {
         "type": "boolean",
         "control": "profile",
-        "default": false
+        "default": false,
+        "label": "Maker Memory",
+        "description": "Use Cindy Maker Memory"
       },
       "nativeMemory": {
         "type": "boolean",
         "control": "profile",
-        "default": false
+        "default": false,
+        "label": "Native Memory",
+        "description": "Use the harness native memory"
       },
       "compaction": {
         "type": "object",
@@ -96,27 +102,132 @@
         "default": {
           "enabled": true,
           "thresholdPct": 80
-        }
+        },
+        "label": "Compaction",
+        "description": "Context compaction configuration"
       },
       "attachments": {
         "type": "boolean",
         "control": "profile",
-        "default": false
+        "default": false,
+        "label": "Attachments",
+        "description": "Allow attachment input"
       },
       "piProjectSkills": {
         "type": "boolean",
         "control": "profile",
-        "default": false
+        "default": false,
+        "label": "Pi Project Skills",
+        "description": "Allow Pi to load project skills"
       },
       "remoteHttpMcp": {
         "type": "array",
         "control": "profile",
-        "default": []
+        "default": [],
+        "label": "Remote HTTP MCP",
+        "description": "Remote HTTP MCP service configuration"
       },
       "nativeProviders": {
         "type": "array",
         "control": "profile",
-        "default": []
+        "default": [],
+        "label": "Native Providers",
+        "description": "Pi native model provider configuration"
+      }
+    },
+    "controls": {
+      "permissionMode": {
+        "type": "enum",
+        "control": "profile",
+        "default": "bypassPermissions",
+        "values": [
+          "bypassPermissions",
+          "acceptEdits",
+          "default",
+          "ask",
+          "auto",
+          "plan"
+        ]
+      },
+      "systemPrompt": {
+        "type": "enum",
+        "control": "profile-bundle",
+        "default": "cindy-production",
+        "values": [
+          "cindy-production",
+          "vendor-default"
+        ],
+        "evidence": [
+          "systemPromptDigest"
+        ]
+      },
+      "toolSurface": {
+        "type": "object",
+        "control": "profile-harness",
+        "digest": "toolSurfaceDigest"
+      },
+      "mcpProviders": {
+        "type": "array",
+        "control": "profile",
+        "credentialSafe": true
+      },
+      "subagents": {
+        "type": "object",
+        "control": "profile-route",
+        "properties": {
+          "enabled": "boolean",
+          "strategy": [
+            "native",
+            "disabled"
+          ],
+          "modelSource": [
+            "same-as-parent",
+            "explicit-route"
+          ]
+        }
+      },
+      "contextLimit": {
+        "type": "integer",
+        "control": "model-route",
+        "enforcement": "client-request",
+        "minimum": 1
+      },
+      "effort": {
+        "type": "enum",
+        "control": "model-route",
+        "values": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      "maxOutputTokens": {
+        "type": "integer",
+        "control": "model-route",
+        "enforcement": "client-request",
+        "minimum": 1
+      },
+      "compatibilityProxy": {
+        "type": "object",
+        "control": "route-profile",
+        "credentialSafe": true
+      },
+      "containerSandbox": {
+        "type": "boolean",
+        "control": "execution",
+        "default": true,
+        "requiredForFormalRun": true,
+        "userEditable": false
+      },
+      "throughputCap": {
+        "type": "object",
+        "control": "external-proxy",
+        "requiresExternalEnforcement": true,
+        "requiresEvidence": true
       }
     },
     "defaultValues": {
@@ -131,15 +242,26 @@
       "piProjectSkills": false,
       "remoteHttpMcp": [],
       "nativeProviders": []
-    }
+    },
+    "constraints": [
+      {
+        "type": "mutuallyExclusive",
+        "features": [
+          "makerMemory",
+          "nativeMemory"
+        ],
+        "offLabel": "关闭 Memory"
+      }
+    ]
   },
+  "capabilityRegistryDigest": "ccce35b79416076da721280de32730da83a63f5461f3b01244e274bac962f9fd",
   "cindyHeadlessVersion": "0.3.2",
   "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2",
-  "cindyCommit": "cd7e966566b249a577372d1a918f28aeb51ac25e",
-  "sourceDirty": false,
+  "cindyCommit": "2584d1fcf5726132116a3088344e3de67214a7b8",
+  "sourceDirty": true,
   "lockfileDigest": "e3913adc88a80fbf9f4816320171606828ba20841ef7c9bf1431ed932d382660",
-  "cliDigest": "a5512fd9b89e573371b498ea6e0d0e015590bcc991bcd8ace8d94dd984cd3024",
-  "evalCliDigest": "bd2ac8294f968cbadedb4ef8d219eb1b2193bb7a623b22416df95778841e14d3",
+  "cliDigest": "c738ba744616e9462efdbcba68908f47c190fc2a0f3d20b7cff215e093793a22",
+  "evalCliDigest": "bd29c98b85515a91be340d2c53d9e073029c23444ff124554a4208a19e104e18",
   "profilesDigest": "c006ec3acb88671ff77f054628867501cbc2580feb66e353fddae57ad3bb7ec7",
   "systemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
   "codexSystemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
@@ -157,5 +279,5 @@
   "observedCodexVersion": "codex-cli 0.145.0",
   "observedPiVersion": "0.84.4",
   "platform": "linux-x64",
-  "generatedAt": "2026-09-08T15:36:06+08:00"
+  "generatedAt": "2026-09-08T15:39:37+08:00"
 }

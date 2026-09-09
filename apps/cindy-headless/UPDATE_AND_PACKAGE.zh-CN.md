@@ -196,6 +196,85 @@ Desktop-only 区域记录原因。
 普通 bundle、prompt 或现有 Profile 字段更新不要求修改 Adapter。新 harness 协议，或
 需要新挂载、secret、参数、artifact 的 feature，通常必须修改 Adapter。
 
+### 5.1 能力注册表登记（新增或变更功能必做）
+
+能力注册表的唯一正本是 `apps/cindy-headless/capability-registry.json`。不要在
+`compatibility.ts`、`build-linux-bundle.mjs`、网页代码或 manifest 中另外维护一份
+feature 列表。构建脚本会读取注册表，并把它复制/编译到 bundle 的
+`bundle-manifest.json.capabilityCatalog`。
+
+先判断新内容属于 `features` 还是 `controls`：
+
+| 区域 | 用途 | 例子 | 是否直接驱动 Profile `--features` |
+|---|---|---|---|
+| `features` | 可以由 Headless Profile 开启/关闭的实际功能 | `projectContext`、`makerMemory`、`nativeProviders` | 是 |
+| `controls` | 配置、路由或执行层控制面，不一定能由 Headless 自己执行 | `permissionMode`、`contextLimit`、`throughputCap`、`toolSurface` | 否 |
+
+新增一个 Profile 功能时，至少完成以下登记：
+
+```json
+{
+  "features": {
+    "exampleFeature": {
+      "type": "boolean",
+      "control": "profile",
+      "default": false,
+      "label": "Example Feature",
+      "description": "Credential-free description for discovery"
+    }
+  },
+  "harnesses": {
+    "claude-code": {
+      "features": ["exampleFeature"]
+    }
+  }
+}
+```
+
+实际编辑时必须保留对应 harness 原有字段（`id`、模型和已有 features），上面的片段
+只是字段形状示例。对于 `object`、`array` 或整数控制，补齐可验证的结构约束；不要
+把所有内容都登记成 boolean。需要互斥或安全约束时，在顶层 `constraints` 增加声明，
+并在 `src/profile.ts` 中实现 fail-closed 校验。例如 `makerMemory` 与
+`nativeMemory` 只能启用一个。
+
+新增配置/路由/执行控制时，登记在 `controls`，并写清楚控制层和证据要求：
+
+```json
+{
+  "controls": {
+    "exampleLimit": {
+      "type": "integer",
+      "control": "model-route",
+      "minimum": 1,
+      "enforcement": "client-request"
+    }
+  }
+}
+```
+
+`controls` 只表示 Headless 可以发现和描述该控制，不表示上游模型或外部 Proxy 已执行。
+涉及密钥的 MCP、Proxy 或 Provider 只能登记模板、环境变量名和
+`credentialSafe: true` 等元数据，禁止写入 URL 中的 token、API key 或本地路径。
+`throughputCap` 必须同时要求外部执行和运行证据；没有证据时只能报告
+`DETECTED_BUT_NOT_ENFORCED`。
+
+登记完成后按以下顺序验证：
+
+```powershell
+Get-Content apps/cindy-headless/capability-registry.json | ConvertFrom-Json
+pnpm --filter cindy-headless typecheck
+pnpm --filter cindy-headless test
+$env:CINDY_HEADLESS_ALLOW_DIRTY_BUNDLE = '1'
+pnpm --filter cindy-headless bundle:linux
+Remove-Item Env:CINDY_HEADLESS_ALLOW_DIRTY_BUNDLE
+pnpm --filter cindy-headless verify:bundle
+node apps/cindy-headless/dist/cli.cjs capabilities --manifest apps/cindy-headless/bundle/linux-x64/bundle-manifest.json
+```
+
+至少增加三类契约测试：功能开启、功能关闭、非法组合/不支持 harness。检查输出时确认
+新能力同时出现在注册表、生成的 manifest 和 capabilities CLI；不要手工编辑生成的
+manifest。正式出包前必须按本手册第 8、9 节创建 clean commit 并重新构建 formal bundle。
+
 ## 6. 更新版本记录
 
 完成审计和适配后，把 `package.json.cindyUpstreamCommit` 更新为 `$newCindy`。该 SHA

@@ -116,6 +116,19 @@ defaults used by upload services to render configuration choices. This catalog
 describes what the package offers; the effective profile and runtime evidence
 record what a particular Run actually enabled.
 
+The single source of truth is `capability-registry.json`. When Cindy gains or
+removes a Headless-visible capability, update that registry as part of the
+Headless update, then rebuild the bundle. The build copies the registry into
+`capabilityCatalog` automatically; no second feature list in the build script
+or web client should be maintained. Registry entries describe controls and
+declared adapter coverage only. Route support, proxy enforcement, and runtime
+evidence must still be checked before a capability is reported as enforced.
+
+This README is a quick reference, not a replacement for the operating manual.
+For the required registration fields, feature/control distinction, harness
+mapping, security rules, contract tests, and formal-bundle procedure, follow
+[`UPDATE_AND_PACKAGE.zh-CN.md`](UPDATE_AND_PACKAGE.zh-CN.md), section 5.1.
+
 Generate a portable profile directly from the bundle manifest, then validate it:
 
 ```powershell

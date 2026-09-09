@@ -13,6 +13,8 @@ if (manifest.schemaVersion !== 5 || manifest.headlessContractVersion !== 1) thro
 if (!Array.isArray(manifest.capabilityCatalog?.harnesses) || manifest.capabilityCatalog.harnesses.length !== 3) throw new Error('bundle manifest must declare all three harnesses');
 if (new Set(manifest.capabilityCatalog.harnesses.map((item) => item.backend)).size !== 3 || !['claude-code', 'codex', 'pi'].every((backend) => manifest.capabilityCatalog.harnesses.some((item) => item.backend === backend))) throw new Error('bundle manifest harness identities are invalid');
 if (!/^[0-9a-f]{40}$/.test(manifest.cindyUpstreamCommit ?? '')) throw new Error('bundle manifest must declare cindyUpstreamCommit');
+const registryBytes = await readFile(path.join(bundleDir, 'capability-registry.json'));
+if (!/^[a-f0-9]{64}$/.test(manifest.capabilityRegistryDigest ?? '') || createHash('sha256').update(registryBytes).digest('hex') !== manifest.capabilityRegistryDigest) throw new Error('capability registry digest mismatch');
 for (const [relativePath, expected] of [
   ['dist/cli.cjs', manifest.cliDigest],
   ['dist/eval-cli.cjs', manifest.evalCliDigest],
