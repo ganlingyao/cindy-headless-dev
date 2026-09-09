@@ -30,7 +30,7 @@ describe('headless compatibility contract', () => {
   it('publishes a stable web-discovery capability catalog', () => {
     const catalog = capabilityCatalog('claude-code');
     expect(catalog.contractVersion).toBe(1);
-    expect(catalog.harnesses).toEqual([{ id: 'cindy-claude', backend: 'claude-code', features: ['projectContext', 'makerMemory', 'nativeMemory', 'compaction', 'attachments', 'remoteHttpMcp'], adapterSupported: true }]);
+    expect(catalog.harnesses).toEqual([{ id: 'cindy-claude', backend: 'claude-code', features: ['projectContext', 'makerMemory', 'nativeMemory', 'attachments'], adapterSupported: true }]);
     expect(catalog.features.projectContext).toMatchObject({ type: 'boolean', control: 'profile', default: false, label: 'Project Context' });
     expect(catalog.constraints).toEqual([{ type: 'mutuallyExclusive', features: ['makerMemory', 'nativeMemory'], harnesses: ['claude-code', 'codex'], offLabel: '关闭所有自动记忆' }]);
   });
@@ -38,7 +38,7 @@ describe('headless compatibility contract', () => {
   it('advertises Cindy memory controls for Pi while keeping the backend identity', () => {
     const catalog = capabilityCatalog('pi');
     expect(catalog.harnesses[0]).toMatchObject({ id: 'cindy-pi', backend: 'pi' });
-    expect(catalog.harnesses[0].features).toEqual(['projectContext', 'makerMemory', 'nativeMemory', 'compaction', 'attachments', 'piProjectSkills', 'remoteHttpMcp', 'nativeProviders']);
+    expect(catalog.harnesses[0].features).toEqual(['projectContext', 'makerMemory', 'nativeMemory', 'attachments', 'piProjectSkills']);
     expect(catalog.features.makerMemory).toBeDefined();
   });
 

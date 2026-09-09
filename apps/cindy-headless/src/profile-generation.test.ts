@@ -91,7 +91,6 @@ describe('profile generation', () => {
       manifestPath,
       outputPath,
       harness: 'claude-code',
-      features: ['remoteHttpMcp'],
       mcpServers: [{ id: 'docs', transport: 'http', url: 'https://mcp.example.test', bearerTokenEnvVar: 'MCP_TOKEN' }],
     });
     expect(profile.mcpServers).toEqual([{ id: 'docs', transport: 'http', url: 'https://mcp.example.test', bearerTokenEnvVar: 'MCP_TOKEN' }]);
@@ -109,7 +108,7 @@ describe('profile generation', () => {
     expect(() => generateProfileFromManifest(manifest, { manifestPath, outputPath, harness: 'future' })).toThrow('bundle does not provide harness');
     expect(() => generateProfileFromManifest(manifest, { manifestPath, outputPath, harness: 'codex', features: ['piProjectSkills'] })).toThrow('DETECTED_BUT_UNSUPPORTED');
     expect(() => generateProfileFromManifest(manifest, { manifestPath, outputPath, harness: 'pi', modelId: 'custom' })).toThrow('custom Pi models require');
-    expect(() => generateProfileFromManifest(manifest, { manifestPath, outputPath, harness: 'claude-code', features: ['remoteHttpMcp'] })).toThrow('requires --mcp-config');
+    expect(() => generateProfileFromManifest(manifest, { manifestPath, outputPath, harness: 'claude-code', features: ['remoteHttpMcp'] })).toThrow('DETECTED_BUT_UNSUPPORTED');
     expect(() => generateProfileFromManifest(manifest, { manifestPath, outputPath, harness: 'pi', effort: 'ultra' })).toThrow('ultra effort is not supported');
   });
 });

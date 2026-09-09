@@ -1,6 +1,6 @@
 {
   "name": "cindy-headless",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2",
   "private": true,
   "type": "module",

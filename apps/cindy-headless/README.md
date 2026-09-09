@@ -2,7 +2,7 @@
 
 Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-core` and MCP contracts, then exposes the Claude Code, Codex, and Pi harnesses through a CLI and a Harbor `BaseAgent` adapter. It does not recreate Cindy Desktop, Electron UI, or the Agent binaries.
 
-Version `0.3.3` is based on Cindy upstream commit `b91b78c507a6605bb631ad6e85bf82d94d71efd2`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
+Version `0.3.4` is based on Cindy upstream commit `b91b78c507a6605bb631ad6e85bf82d94d71efd2`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
 
 The current feature-by-feature parity inventory is maintained in
 [`CINDY_FEATURE_PARITY.md`](CINDY_FEATURE_PARITY.md).
@@ -133,14 +133,16 @@ node apps/cindy-headless/dist/cli.cjs capabilities --manifest apps/cindy-headles
 ```
 
 New bundles publish `capabilityCatalog` in `bundle-manifest.json`. It declares
-all packaged harnesses, profile-controlled feature schema, and explicit
-defaults used by upload services to render configuration choices. This catalog
+all packaged harnesses, the deliberately maintained set of profile-controlled
+feature switches, and explicit defaults used by upload services to render
+configuration choices. It is not an automatic inventory of every Cindy feature. This catalog
 describes what the package offers; the effective profile and runtime evidence
 record what a particular Run actually enabled.
 
-The single source of truth is `capability-registry.json`. When Cindy gains or
-removes a Headless-visible capability, update that registry as part of the
-Headless update, then rebuild the bundle. The build copies the registry into
+The single source of truth is `capability-registry.json`, maintained explicitly
+by the Headless maintainers. Every Cindy update still requires a source diff and
+feature-parity review, but a discovered Cindy change is added to `features` only
+when it is intended to become a user-selectable evaluation switch. The build copies the registry into
 `capabilityCatalog` automatically; no second feature list in the build script
 or web client should be maintained. Registry entries describe controls and
 declared adapter coverage only. Route support, proxy enforcement, and runtime
@@ -158,7 +160,9 @@ node apps/cindy-headless/dist/cli.cjs profile generate --manifest apps/cindy-hea
 node apps/cindy-headless/dist/cli.cjs profile validate --profile apps/cindy-headless/bundle/linux-x64/effective-profiles/codex.json
 ```
 
-Use `--features` with a comma-separated list to opt into declared features. A
+Use `--features` with a comma-separated list to opt into declared boolean switches.
+Compaction and the packaged Cindy system prompt currently follow the maintained
+profile defaults and are not exposed as web switches. A
 custom Pi model additionally requires `--provider`, `--base-url`, `--api`,
 `--context-limit`, and `--max-output-tokens`; the generator writes the matching
 `nativeProviders` entry so the result remains valid and reproducible.

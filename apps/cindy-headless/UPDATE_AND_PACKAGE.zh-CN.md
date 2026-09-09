@@ -160,7 +160,9 @@ Desktop-only 区域记录原因。
 | `ADAPTER_UPDATE` | 启动参数、挂载、环境变量或 artifact schema 变化 | 同步 Adapter 后才能跑测 |
 | `UNSUPPORTED` | 无法脱离 UI、账号、设备或人工批准 | 不实现，记录限制 |
 
-仅在 Cindy 新增功能，不代表它会自动出现在上传服务。成为可选择能力必须同时满足：
+每次更新 Cindy 都必须扫描源码差异、判断 Headless 影响并更新 parity；但 Cindy 新增功能
+不会因此自动注册或出现在上传服务。只有维护者明确决定将其作为跑测变量，并同时满足
+以下条件时，才成为网页可选择能力：
 
 1. Headless 能开启或关闭；
 2. Profile schema 能表达并 fail closed；
@@ -169,7 +171,7 @@ Desktop-only 区域记录原因。
 5. identity/config/result/trace 能证明实际状态；
 6. 存在 on、off 和非法组合的契约测试。
 
-## 5. 把 Cindy 能力加入 Headless
+## 5. 根据 Cindy 变化更新 Headless
 
 | 位置 | 责任 |
 |---|---|
@@ -185,30 +187,34 @@ Desktop-only 区域记录原因。
 实现顺序：
 
 1. 更新 `maker-core` 调用，使已有 Headless 行为恢复正确；
-2. 为新能力增加 Profile 字段和严格校验；
-3. 在 host 中映射到实际 Cindy API；
-4. 在 artifact 中记录 requested 与 effective 状态；
-5. 加入对应 harness 的 catalog，明确默认值；
-6. 增加开启、关闭和非法组合测试；
+2. 判断变化属于内部兼容更新、长期 Profile 配置，还是需要公开的新跑测变量；
+3. 必要时增加 Profile 字段和严格校验，并在 host 中映射到实际 Cindy API；
+4. 在 artifact 中记录影响跑测复核的 requested 与 effective 状态；
+5. 仅当它是明确的网页开关时，加入对应 harness 的 catalog feature；
+6. 为公开开关增加开启、关闭和非法组合测试；
 7. 更新 parity 文档；
 8. 只有外部执行契约变化时才更新 Adapter。
 
 普通 bundle、prompt 或现有 Profile 字段更新不要求修改 Adapter。新 harness 协议，或
 需要新挂载、secret、参数、artifact 的 feature，通常必须修改 Adapter。
 
-### 5.1 能力注册表登记（新增或变更功能必做）
+### 5.1 能力注册表由维护者显式维护
 
 能力注册表的唯一正本是 `apps/cindy-headless/capability-registry.json`。不要在
 `compatibility.ts`、`build-linux-bundle.mjs`、网页代码或 manifest 中另外维护一份
-feature 列表。构建脚本会读取注册表，并把它复制/编译到 bundle 的
-`bundle-manifest.json.capabilityCatalog`。
+feature 列表。构建脚本只负责读取维护者确认过的注册表，并把它复制/编译到 bundle 的
+`bundle-manifest.json.capabilityCatalog`；它不会扫描 Cindy 源码并自动注册功能。
+
+扫描 Cindy 源码仍是每次同步上游的必做步骤。扫描的目标是发现 API、运行行为、默认值、
+证据和兼容性变化，以便正确更新 Headless；扫描结果默认记录在实现、测试或
+`CINDY_FEATURE_PARITY.md`，并不默认进入网页功能列表。
 
 先判断新内容属于 `features` 还是 `controls`：
 
 | 区域 | 用途 | 例子 | 是否直接驱动 Profile `--features` |
 |---|---|---|---|
-| `features` | 可以由 Headless Profile 开启/关闭的实际功能 | `projectContext`、`makerMemory`、`nativeProviders` | 是 |
-| `controls` | 配置、路由或执行层控制面，不一定能由 Headless 自己执行 | `permissionMode`、`contextLimit`、`throughputCap`、`toolSurface` | 否 |
+| `features` | 维护者明确开放、可由 Headless Profile 独立开启/关闭的布尔跑测变量 | `projectContext`、`makerMemory`、`attachments` | 是 |
+| `controls` | 结构化配置、路由或执行层控制面，不作为普通功能开关 | `nativeProviders`、`remoteHttpMcp`、`permissionMode`、`contextLimit` | 否 |
 
 新增一个 Profile 功能时，至少完成以下登记：
 
@@ -232,8 +238,8 @@ feature 列表。构建脚本会读取注册表，并把它复制/编译到 bund
 ```
 
 实际编辑时必须保留对应 harness 原有字段（`id`、模型和已有 features），上面的片段
-只是字段形状示例。对于 `object`、`array` 或整数控制，补齐可验证的结构约束；不要
-把所有内容都登记成 boolean。需要互斥或安全约束时，在顶层 `constraints` 增加声明，
+只是字段形状示例。`features` 当前只接受适合网页直接勾选的布尔变量；对象、数组、
+整数和枚举配置应放入 `controls`，不能为了显示在网页上而伪装成 boolean。需要互斥或安全约束时，在顶层 `constraints` 增加声明，
 并在 `src/profile.ts` 中实现 fail-closed 校验。约束只适用于部分 Harness 时必须填写
 `harnesses`，不能扩大成全局限制。例如 Cindy 的 Claude Code/Codex 在启用 Maker
 Memory 时会关闭 Native Memory，但 Pi 允许 Maker Memory 与 Pi Auto Memory 同时开启，
@@ -273,7 +279,7 @@ pnpm --filter cindy-headless verify:bundle
 node apps/cindy-headless/dist/cli.cjs capabilities --manifest apps/cindy-headless/bundle/linux-x64/bundle-manifest.json
 ```
 
-至少增加三类契约测试：功能开启、功能关闭、非法组合/不支持 harness。检查输出时确认
+对新增网页开关至少增加三类契约测试：功能开启、功能关闭、非法组合/不支持 harness。检查输出时确认
 新能力同时出现在注册表、生成的 manifest 和 capabilities CLI；不要手工编辑生成的
 manifest。正式出包前必须按本手册第 8、9 节创建 clean commit 并重新构建 formal bundle。
 

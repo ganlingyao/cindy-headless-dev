@@ -40,8 +40,7 @@ const DEFAULT_MODELS: Record<keyof typeof HARNESS_FILES, HeadlessProfile['model'
 // registry entry without teaching the generator how to materialize it must fail
 // closed instead of being advertised and silently ignored.
 export const PROFILE_GENERATION_FEATURES = new Set([
-  'projectContext', 'makerMemory', 'nativeMemory', 'compaction', 'attachments',
-  'piProjectSkills', 'remoteHttpMcp', 'nativeProviders',
+  'projectContext', 'makerMemory', 'nativeMemory', 'attachments', 'piProjectSkills',
 ]);
 
 function assertGeneratorCoverage(catalog: HeadlessCapabilityCatalog): void {
@@ -71,7 +70,6 @@ export function generateProfileFromManifest(manifest: BundleManifest, options: P
   const entry = harnessEntry(catalog, options.harness);
   const harness = options.harness as keyof typeof HARNESS_FILES;
   const selected = new Set(options.features ?? []);
-  if (options.mcpServers?.length) selected.add('remoteHttpMcp');
   const unsupported = [...selected].filter((id) => discovered.support[id] !== 'SUPPORTED' || !entry.features.includes(id));
   if (unsupported.length) throw new Error(`DETECTED_BUT_UNSUPPORTED: ${unsupported.join(', ')}`);
 
@@ -109,13 +107,6 @@ export function generateProfileFromManifest(manifest: BundleManifest, options: P
     model = { ...model, provider: options.providerId!, requestedId };
     supportedModelIds.push(requestedId);
   }
-  if (selected.has('remoteHttpMcp') && !options.mcpServers?.length) {
-    throw new Error('remoteHttpMcp requires --mcp-config with at least one server');
-  }
-  if (selected.has('nativeProviders') && !nativeProviders?.length) {
-    throw new Error('nativeProviders requires a custom Pi model configuration');
-  }
-
   const compaction = defaults.compaction;
   return validateProfile({
     id: `generated-${harness}`,
