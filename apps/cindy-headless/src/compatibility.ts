@@ -2,7 +2,7 @@ import type { HeadlessProfile } from './profile.js';
 import registry from '../capability-registry.json';
 
 export const HEADLESS_CONTRACT_VERSION = 1;
-export const CINDY_HEADLESS_VERSION = '0.3.2';
+export const CINDY_HEADLESS_VERSION = '0.3.3';
 export const CINDY_UPSTREAM_COMMIT = 'b91b78c507a6605bb631ad6e85bf82d94d71efd2';
 
 export interface HeadlessFeatureCapability {

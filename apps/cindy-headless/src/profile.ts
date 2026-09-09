@@ -124,7 +124,7 @@ export function validateProfile(profile: unknown): HeadlessProfile {
   if (value.agentBackend === 'codex' && (value.permissionMode === 'acceptEdits' || value.permissionMode === 'default')) throw new Error(`${value.permissionMode} permissionMode is not supported by codex`);
   if (value.agentBackend === 'pi' && value.permissionMode !== 'bypassPermissions') throw new Error('headless pi requires bypassPermissions because no interactive approval channel is available');
   if (typeof value.makerMemory !== 'boolean' || typeof value.nativeMemory !== 'boolean' || typeof value.projectContext !== 'boolean') throw new Error('makerMemory, nativeMemory and projectContext must be boolean');
-  if (value.makerMemory && value.nativeMemory) throw new Error('makerMemory and nativeMemory are mutually exclusive');
+  if (value.agentBackend !== 'pi' && value.makerMemory && value.nativeMemory) throw new Error('makerMemory and nativeMemory are mutually exclusive for claude-code and codex');
   if (value.containerSandbox !== undefined && typeof value.containerSandbox !== 'boolean') throw new Error('containerSandbox must be boolean');
   if (value.unsafeAllowUnsandboxedBypass !== undefined && typeof value.unsafeAllowUnsandboxedBypass !== 'boolean') throw new Error('unsafeAllowUnsandboxedBypass must be boolean');
   if (value.unsafeAllowUnsandboxedBypass && value.permissionMode !== 'bypassPermissions') throw new Error('unsafeAllowUnsandboxedBypass requires bypassPermissions');

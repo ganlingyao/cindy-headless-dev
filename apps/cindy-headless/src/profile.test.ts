@@ -15,7 +15,13 @@ describe('headless profile', () => {
     expect(() => validateProfile({ ...profile, supportedModelIds: ['latest'], model: { ...profile.model, requestedId: 'latest' } })).toThrow(/exact/);
   });
   it('requires single-variable metadata for derived profiles', () => expect(() => validateProfile({ ...profile, parentProfile: 'base' })).toThrow(/changedDimensions/));
-  it('keeps Cindy Maker Memory mutually exclusive with native Agent memory', () => expect(() => validateProfile({ ...profile, makerMemory: true, nativeMemory: true })).toThrow(/mutually exclusive/));
+  it('keeps Cindy Maker Memory mutually exclusive with native memory for Claude and Codex', () => {
+    expect(() => validateProfile({ ...profile, makerMemory: true, nativeMemory: true })).toThrow(/mutually exclusive/);
+    expect(() => validateProfile({ ...codexProfile, makerMemory: true, nativeMemory: true })).toThrow(/mutually exclusive/);
+  });
+  it('allows Pi Maker Memory and Pi Auto Memory together like Cindy Desktop', () => {
+    expect(validateProfile({ ...piProfile, makerMemory: true, nativeMemory: true })).toMatchObject({ makerMemory: true, nativeMemory: true });
+  });
   it('reports the original Cindy harness switches in capabilities', () => expect(capabilities(validateProfile({ ...profile, makerMemory: true, projectContext: true }))).toMatchObject({ makerMemory: true, nativeMemory: false, projectContext: true, nativeToolSurface: 'claude-code-default', cindyMcpProviders: ['cindy_memory'], desktopOnlyProviders: [], multiTurnSession: true }));
   it('reports Cindy Codex app-server capabilities', () => expect(capabilities(validateProfile({ ...codexProfile, makerMemory: true }))).toMatchObject({ agentBackend: 'codex', nativeToolSurface: 'codex-app-server-default', supportedPermissionModes: ['bypassPermissions', 'ask', 'auto', 'plan'], cindyMcpProviders: ['cindy_memory'] }));
   it('reports Cindy Pi RPC capabilities', () => expect(capabilities(validateProfile({ ...piProfile, makerMemory: true }))).toMatchObject({ agentBackend: 'pi', nativeToolSurface: 'pi-rpc-default', supportedPermissionModes: ['bypassPermissions'], cindyMcpProviders: ['cindy_memory'] }));

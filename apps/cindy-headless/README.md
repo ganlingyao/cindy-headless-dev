@@ -2,7 +2,7 @@
 
 Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-core` and MCP contracts, then exposes the Claude Code, Codex, and Pi harnesses through a CLI and a Harbor `BaseAgent` adapter. It does not recreate Cindy Desktop, Electron UI, or the Agent binaries.
 
-Version `0.3.2` is based on Cindy upstream commit `b91b78c507a6605bb631ad6e85bf82d94d71efd2`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
+Version `0.3.3` is based on Cindy upstream commit `b91b78c507a6605bb631ad6e85bf82d94d71efd2`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
 
 The current feature-by-feature parity inventory is maintained in
 [`CINDY_FEATURE_PARITY.md`](CINDY_FEATURE_PARITY.md).
@@ -12,7 +12,29 @@ local Cindy checkout from the last synchronized Cindy revision, exclude
 Desktop-only changes, port runtime capabilities, and build a formal bundle,
 see [`UPDATE_AND_PACKAGE.zh-CN.md`](UPDATE_AND_PACKAGE.zh-CN.md).
 
-## Quick start
+## Create an upload-ready bundle
+
+For ordinary users, the recommended workflow is one command from a clean,
+committed Cindy checkout:
+
+```powershell
+pnpm --filter cindy-headless package:upload
+```
+
+It builds the Linux x64 bundle, verifies it, creates the self-contained `full`
+archive, verifies the archive, and prints its exact path and SHA256. Upload the
+reported `apps/cindy-headless/release/cindy-headless-linux-x64-full-<version>.tar.gz`
+file to Headless Benchmark Tool. Users do not need to create a development
+bundle first.
+
+When only `apps/cindy-headless` contains source changes, the command keeps the
+version synchronized, automatically increments the patch version when needed,
+and creates a signed local checkpoint commit before building. It refuses to
+auto-commit when other Cindy paths are dirty. It may safely reuse the sole
+generated formal manifest when that manifest already identifies the current
+HEAD.
+
+## Local development quick start
 
 From a source checkout on Windows:
 
@@ -24,9 +46,9 @@ cd ..\..\AgentTest\harbor
 uv run harbor eval execute <freeze-id> --workspace-root . --approve
 ```
 
-The deployable artifact is `apps/cindy-headless/bundle/linux-x64`. Upload that
-directory as one immutable bundle after `verify:bundle` succeeds. No separate
-release archive is required for Harbor.
+The bundle directory is useful for local development and direct Harbor work.
+For web upload, use the verified `full` release archive produced by
+`package:upload`.
 
 ## Layout
 

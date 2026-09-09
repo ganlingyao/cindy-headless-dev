@@ -234,8 +234,10 @@ feature 列表。构建脚本会读取注册表，并把它复制/编译到 bund
 实际编辑时必须保留对应 harness 原有字段（`id`、模型和已有 features），上面的片段
 只是字段形状示例。对于 `object`、`array` 或整数控制，补齐可验证的结构约束；不要
 把所有内容都登记成 boolean。需要互斥或安全约束时，在顶层 `constraints` 增加声明，
-并在 `src/profile.ts` 中实现 fail-closed 校验。例如 `makerMemory` 与
-`nativeMemory` 只能启用一个。
+并在 `src/profile.ts` 中实现 fail-closed 校验。约束只适用于部分 Harness 时必须填写
+`harnesses`，不能扩大成全局限制。例如 Cindy 的 Claude Code/Codex 在启用 Maker
+Memory 时会关闭 Native Memory，但 Pi 允许 Maker Memory 与 Pi Auto Memory 同时开启，
+因此该互斥约束只登记 `harnesses: ["claude-code", "codex"]`。
 
 新增配置/路由/执行控制时，登记在 `controls`，并写清楚控制层和证据要求：
 
@@ -286,7 +288,12 @@ Headless `version` 的建议：
 - 仅同步内部 Cindy 修复且对外契约不变：至少 bump patch 后发布；
 - Profile、catalog 或 artifact 增加向后兼容字段：bump minor；
 - 删除、重命名或改变现有 CLI/Profile/artifact 语义：bump major；
-- 同一 Headless version 不应对应多个进入正式跑测的不同 bundle。
+- 每一个新的正式源码状态都必须使用新的 Headless version；日常查看和选择包以版本号为主，
+  SHA256 用于确认同一版本文件是否完全一致；
+- 同一 Headless version 不应对应多个进入正式跑测的不同 bundle；同一 commit 的同一正式包
+  可以重复生成或重复上传，不需要再次升版本；
+- `package:upload` 检测到 Headless 有新改动但版本仍与上一个 bundle 相同时，会自动提升
+  patch 版本，并同步 package、兼容性契约、运行时常量和版本说明。
 
 确认没有残留旧基线：
 
@@ -327,6 +334,30 @@ git status --short
 Profile。
 
 ## 9. 生成正式包
+
+普通使用者不需要先生成 development 包。完成 Cindy 修改、Headless 适配和定向验证后
+直接运行：
+
+```powershell
+pnpm --filter cindy-headless package:upload
+```
+
+该命令会依次完成 Linux x64 bundle 构建、bundle 校验、包含 Node 与三个 harness
+runtime 的 full archive 打包、完整分发校验，并在最后打印可上传文件的绝对路径和
+SHA256。用户直接把输出的
+`apps/cindy-headless/release/cindy-headless-linux-x64-full-<version>.tar.gz`
+上传到网页即可；无需先制作或上传 development 包。
+
+如果存在 `apps/cindy-headless` 内的未提交改动，命令会先检查版本号，必要时自动提升
+patch 版本，然后使用 `git commit -s` 创建只包含 Headless 文件的本地 checkpoint commit。
+该提交不要求 push。若 Cindy 其他目录也有未提交修改，为避免误提交其他工作，命令会
+停止并要求先处理这些修改。
+
+正式构建后，若工作区唯一变化是生成的
+`bundle/linux-x64/bundle-manifest.json`，并且它明确记录当前 HEAD、`formal` 和
+`sourceDirty=false`，命令会安全复用该 bundle；除此之外的 dirty 状态一律拒绝。
+
+上述一条命令等价于以下底层步骤，通常仅在排障时分别执行：
 
 ```powershell
 pnpm --filter cindy-headless bundle:linux
