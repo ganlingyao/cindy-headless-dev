@@ -20,8 +20,9 @@ async function capture(command, args, options = {}) {
 
 async function runPnpm(args) {
   const pnpmScript = process.env.npm_execpath;
-  const command = pnpmScript ? process.execPath : (process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm');
-  const commandArgs = pnpmScript ? [pnpmScript, ...args] : args;
+  const scriptEntrypoint = pnpmScript && /\.(?:cjs|mjs|js)$/i.test(pnpmScript);
+  const command = scriptEntrypoint ? process.execPath : (pnpmScript || (process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'));
+  const commandArgs = scriptEntrypoint ? [pnpmScript, ...args] : args;
   console.log(`> pnpm ${args.join(' ')}`);
   await new Promise((resolve, reject) => {
     const child = spawn(command, commandArgs, { cwd: repoRoot, stdio: 'inherit' });
