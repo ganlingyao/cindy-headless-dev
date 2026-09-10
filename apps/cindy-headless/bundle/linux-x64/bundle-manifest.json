@@ -1,7 +1,7 @@
 {
   "schemaVersion": 5,
   "headlessContractVersion": 1,
-  "bundleMode": "development",
+  "bundleMode": "formal",
   "capabilityCatalog": {
     "schemaVersion": 1,
     "contractVersion": 1,
@@ -12,9 +12,7 @@
           "projectContext",
           "makerMemory",
           "nativeMemory",
-          "compaction",
-          "attachments",
-          "remoteHttpMcp"
+          "attachments"
         ],
         "supportedModelIds": [
           "claude-sonnet-4-6"
@@ -33,9 +31,7 @@
           "projectContext",
           "makerMemory",
           "nativeMemory",
-          "compaction",
-          "attachments",
-          "remoteHttpMcp"
+          "attachments"
         ],
         "supportedModelIds": [
           "gpt-5.4-mini"
@@ -54,11 +50,8 @@
           "projectContext",
           "makerMemory",
           "nativeMemory",
-          "compaction",
           "attachments",
-          "piProjectSkills",
-          "remoteHttpMcp",
-          "nativeProviders"
+          "piProjectSkills"
         ],
         "supportedModelIds": [
           "claude-sonnet-4-6"
@@ -87,24 +80,14 @@
         "control": "profile",
         "default": false,
         "label": "Maker Memory",
-        "description": "Use Cindy Maker Memory"
+        "description": "Use Cindy workdir-scoped memory shared across harnesses"
       },
       "nativeMemory": {
         "type": "boolean",
         "control": "profile",
         "default": false,
         "label": "Native Memory",
-        "description": "Use the harness native memory"
-      },
-      "compaction": {
-        "type": "object",
-        "control": "profile",
-        "default": {
-          "enabled": true,
-          "thresholdPct": 80
-        },
-        "label": "Compaction",
-        "description": "Context compaction configuration"
+        "description": "Use Claude Auto Memory, Codex experimental memories, or Pi Auto Memory"
       },
       "attachments": {
         "type": "boolean",
@@ -119,20 +102,6 @@
         "default": false,
         "label": "Pi Project Skills",
         "description": "Allow Pi to load project skills"
-      },
-      "remoteHttpMcp": {
-        "type": "array",
-        "control": "profile",
-        "default": [],
-        "label": "Remote HTTP MCP",
-        "description": "Remote HTTP MCP service configuration"
-      },
-      "nativeProviders": {
-        "type": "array",
-        "control": "profile",
-        "default": [],
-        "label": "Native Providers",
-        "description": "Pi native model provider configuration"
       }
     },
     "controls": {
@@ -149,17 +118,17 @@
           "plan"
         ]
       },
-      "systemPrompt": {
-        "type": "enum",
-        "control": "profile-bundle",
-        "default": "cindy-production",
-        "values": [
-          "cindy-production",
-          "vendor-default"
-        ],
-        "evidence": [
-          "systemPromptDigest"
-        ]
+      "remoteHttpMcp": {
+        "type": "array",
+        "control": "profile",
+        "credentialSafe": true,
+        "description": "Remote HTTP MCP configuration supplied separately from feature switches"
+      },
+      "nativeProviders": {
+        "type": "array",
+        "control": "profile-route",
+        "credentialSafe": true,
+        "description": "Pi native provider configuration derived from the selected model route"
       },
       "toolSurface": {
         "type": "object",
@@ -234,14 +203,8 @@
       "projectContext": false,
       "makerMemory": false,
       "nativeMemory": false,
-      "compaction": {
-        "enabled": true,
-        "thresholdPct": 80
-      },
       "attachments": false,
-      "piProjectSkills": false,
-      "remoteHttpMcp": [],
-      "nativeProviders": []
+      "piProjectSkills": false
     },
     "constraints": [
       {
@@ -250,18 +213,22 @@
           "makerMemory",
           "nativeMemory"
         ],
-        "offLabel": "关闭 Memory"
+        "harnesses": [
+          "claude-code",
+          "codex"
+        ],
+        "offLabel": "关闭所有自动记忆"
       }
     ]
   },
-  "capabilityRegistryDigest": "ccce35b79416076da721280de32730da83a63f5461f3b01244e274bac962f9fd",
-  "cindyHeadlessVersion": "0.3.2",
+  "capabilityRegistryDigest": "d5fbec9676d40f3904fdc892cc61b33610992b33e0a380157414bf97712afcca",
+  "cindyHeadlessVersion": "0.3.4",
   "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2",
-  "cindyCommit": "2584d1fcf5726132116a3088344e3de67214a7b8",
-  "sourceDirty": true,
+  "cindyCommit": "85105470b855624a5668ee0a69522adbd4517d3c",
+  "sourceDirty": false,
   "lockfileDigest": "e3913adc88a80fbf9f4816320171606828ba20841ef7c9bf1431ed932d382660",
-  "cliDigest": "c738ba744616e9462efdbcba68908f47c190fc2a0f3d20b7cff215e093793a22",
-  "evalCliDigest": "bd29c98b85515a91be340d2c53d9e073029c23444ff124554a4208a19e104e18",
+  "cliDigest": "9942df2cc4463fac3a5506252e77b08de03f5cc6a6bdf3774470473a2290d5e9",
+  "evalCliDigest": "8f59c9d62140df829a5aa1ec5660ec6431e7bc9dc3b44a309fa51d1134abe8ff",
   "profilesDigest": "c006ec3acb88671ff77f054628867501cbc2580feb66e353fddae57ad3bb7ec7",
   "systemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
   "codexSystemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
@@ -279,5 +246,5 @@
   "observedCodexVersion": "codex-cli 0.145.0",
   "observedPiVersion": "0.84.4",
   "platform": "linux-x64",
-  "generatedAt": "2026-09-08T15:39:37+08:00"
+  "generatedAt": "2026-09-09T16:03:55+08:00"
 }
