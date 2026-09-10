@@ -222,14 +222,14 @@
     ]
   },
   "capabilityRegistryDigest": "d5fbec9676d40f3904fdc892cc61b33610992b33e0a380157414bf97712afcca",
-  "cindyHeadlessVersion": "0.3.4",
-  "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2",
-  "cindyCommit": "85105470b855624a5668ee0a69522adbd4517d3c",
+  "cindyHeadlessVersion": "0.3.5",
+  "cindyUpstreamCommit": "abcf92c2b34e99209e505662a3fe4e11868e8aa1",
+  "cindyCommit": "75ed690677dda9aa9a2047a96f0412b8ae1226de",
   "sourceDirty": false,
-  "lockfileDigest": "e3913adc88a80fbf9f4816320171606828ba20841ef7c9bf1431ed932d382660",
-  "cliDigest": "9942df2cc4463fac3a5506252e77b08de03f5cc6a6bdf3774470473a2290d5e9",
+  "lockfileDigest": "425d90e2b0cf92980c8a48d2fa31aff0dc7149a7a7f132e4979ab4a2171ef2df",
+  "cliDigest": "a2c1070a7ccbced83c10b79d5bd01d773bc4561111d5c4c6cfc73dff71f809cd",
   "evalCliDigest": "8f59c9d62140df829a5aa1ec5660ec6431e7bc9dc3b44a309fa51d1134abe8ff",
-  "profilesDigest": "c006ec3acb88671ff77f054628867501cbc2580feb66e353fddae57ad3bb7ec7",
+  "profilesDigest": "21001cc0dfbc015fef9fcf95674890ad08bf26bfb341ece7233c3e53c666206a",
   "systemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
   "codexSystemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
   "piSystemPromptDigest": "cf79194d42a19e1a00d018efbb2bc893ce746a7bcd3e022378a3b2dd77c06874",
@@ -246,5 +246,5 @@
   "observedCodexVersion": "codex-cli 0.145.0",
   "observedPiVersion": "0.84.4",
   "platform": "linux-x64",
-  "generatedAt": "2026-09-09T16:03:55+08:00"
+  "generatedAt": "2026-09-10T17:35:56+08:00"
 }
