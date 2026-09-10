@@ -1,7 +1,7 @@
 {
   "name": "cindy-headless",
-  "version": "0.3.4",
-  "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2",
+  "version": "0.3.5",
+  "cindyUpstreamCommit": "abcf92c2b34e99209e505662a3fe4e11868e8aa1",
   "private": true,
   "type": "module",
   "bin": {

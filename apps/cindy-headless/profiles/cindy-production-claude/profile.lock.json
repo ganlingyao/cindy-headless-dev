@@ -10,5 +10,5 @@
   "profileDigest": "87e746d182fe558f236d8f9c119b1d5756b78bb9115ad88541a46377bcf9df3c",
   "systemPromptDigest": "003c2a8c1ab15422c50156880ca2301ff049ebecd1f666ac19057b1d12ae0c07",
   "agentBinaryVersion": "2.1.259",
-  "cindyUpstreamCommit": "b91b78c507a6605bb631ad6e85bf82d94d71efd2"
+  "cindyUpstreamCommit": "abcf92c2b34e99209e505662a3fe4e11868e8aa1"
 }
