@@ -116,6 +116,11 @@
   `docs/dev-rules/plugin-library-storage.md`。
 - 修改客户端自动更新链路（`cindy-updater` 或 Electron 侧更新服务）前，必须先读
   `docs/dev-rules/cindy-updater.md`。
+- 修改、同步或出包 `apps/cindy-headless` 前，必须先读
+  `apps/cindy-headless/UPDATE_AND_PACKAGE.zh-CN.md`。用户未限定包型时，“出包”“正式包”
+  一律指通过 `pnpm --filter cindy-headless package:release` 生成的 formal full package；
+  不含第三方 harness binaries 的 `package:public-runtime` 仅用于用户明确要求的公共
+  no-vendor 分发，不能替代默认上传包。
 - 新增或修改 Desktop 日志、IPC 错误处理、main 侧业务逻辑与测试、跨平台（macOS／
   Windows）行为，或任何 UI 文案的 i18n 落地前，必须先读
   `docs/dev-rules/engineering-conventions.md`。

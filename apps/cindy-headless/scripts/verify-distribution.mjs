@@ -10,14 +10,21 @@ const repoRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'cindy-headless-distribution-'));
 try {
   const bundleManifest = JSON.parse(await readFile(path.join(repoRoot, 'apps', 'cindy-headless', 'bundle', 'linux-x64', 'bundle-manifest.json'), 'utf8'));
-  await execFileAsync('node', [path.join(repoRoot, 'apps', 'cindy-headless', 'scripts', 'package-release.mjs')], { env: { ...process.env, CINDY_HEADLESS_RELEASE_DIR: path.join(temporary, 'release') } });
+  const packageScript = path.join(repoRoot, 'apps', 'cindy-headless', 'scripts', 'package-release.mjs');
+  await assert.rejects(
+    execFileAsync('node', [packageScript], { env: { ...process.env, CINDY_HEADLESS_RELEASE_DIR: path.join(temporary, 'implicit-release') } }),
+    /requires explicit --mode=full or --mode=public-runtime/,
+  );
+  await execFileAsync('node', [packageScript, '--mode=public-runtime'], { env: { ...process.env, CINDY_HEADLESS_RELEASE_DIR: path.join(temporary, 'release') } });
   const release = JSON.parse(await readFile(path.join(temporary, 'release', 'release-manifest.json'), 'utf8'));
   assert.equal(release.product, 'cindy-headless');
+  assert.equal(release.packageMode, 'public-runtime');
   assert.equal(release.cindyUpstreamCommit, bundleManifest.cindyUpstreamCommit);
   assert.equal(release.includesVendorBinaries, false);
   assert.equal(release.assets.length, 1);
   const sums = await readFile(path.join(temporary, 'release', 'SHA256SUMS'), 'utf8');
-  assert.match(sums, /cindy-headless-linux-x64-runtime-/);
+  assert.match(sums, /cindy-headless-linux-x64-public-runtime-no-vendor-/);
+  assert.doesNotMatch(sums, /cindy-headless-linux-x64-full-/);
   assert.doesNotMatch(sums, /codex\.tar|bin\/claude/);
   const archive = path.join(temporary, 'release', release.assets[0]);
   await execFileAsync('tar', ['-xzf', path.relative(temporary, archive)], { cwd: temporary });

@@ -298,7 +298,7 @@ Headless `version` 的建议：
   SHA256 用于确认同一版本文件是否完全一致；
 - 同一 Headless version 不应对应多个进入正式跑测的不同 bundle；同一 commit 的同一正式包
   可以重复生成或重复上传，不需要再次升版本；
-- `package:upload` 检测到 Headless 有新改动但版本仍与上一个 bundle 相同时，会自动提升
+- `package:release` 检测到 Headless 有新改动但版本仍与上一个 bundle 相同时，会自动提升
   patch 版本，并同步 package、兼容性契约、运行时常量和版本说明。
 
 确认没有残留旧基线：
@@ -345,7 +345,7 @@ Profile。
 直接运行：
 
 ```powershell
-pnpm --filter cindy-headless package:upload
+pnpm --filter cindy-headless package:release
 ```
 
 该命令会依次完成 Linux x64 bundle 构建、bundle 校验、包含 Node 与三个 harness
@@ -395,8 +395,12 @@ Get-Content apps/cindy-headless/release/SHA256SUMS
 apps/cindy-headless/release/cindy-headless-linux-x64-full-<version>.tar.gz
 ```
 
-`full` 包包含 Node 和三个 harness runtime；`runtime` 包不包含 vendor harness binaries。
-分发 full 包前必须确认第三方许可。
+默认正式出包只在 `release` 目录留下上述 `full` 包，避免与精简包并列造成误选。
+`full` 包包含 Node 和三个 harness runtime；分发前必须确认第三方许可。只有用户明确要求
+公共 no-vendor 分发时，才运行
+`pnpm --filter cindy-headless package:public-runtime`，其产物名为
+`cindy-headless-linux-x64-public-runtime-no-vendor-<version>.tar.gz`，不包含 Claude Code、
+Codex 或 Pi harness binaries，不能替代默认上传包。
 
 构建会更新被跟踪的 manifest，审查后单独提交：
 

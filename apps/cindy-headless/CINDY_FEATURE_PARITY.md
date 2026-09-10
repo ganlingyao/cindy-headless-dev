@@ -1,6 +1,6 @@
 # Cindy to Headless feature parity
 
-This inventory applies to Cindy Headless `0.3.5`, based on Cindy upstream commit
+This inventory applies to Cindy Headless `0.3.6`, based on Cindy upstream commit
 `abcf92c2b34e99209e505662a3fe4e11868e8aa1`. A feature is considered available
 only when the Headless CLI or Harbor adapter can exercise it; vendored source
 alone is not sufficient.

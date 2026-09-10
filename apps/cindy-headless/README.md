@@ -2,7 +2,7 @@
 
 Cindy Headless is Cindy's container-friendly runtime. It reuses Cindy's `maker-core` and MCP contracts, then exposes the Claude Code, Codex, and Pi harnesses through a CLI and a Harbor `BaseAgent` adapter. It does not recreate Cindy Desktop, Electron UI, or the Agent binaries.
 
-Version `0.3.5` is based on Cindy upstream commit `abcf92c2b34e99209e505662a3fe4e11868e8aa1`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
+Version `0.3.6` is based on Cindy upstream commit `abcf92c2b34e99209e505662a3fe4e11868e8aa1`. The CLI compatibility report and bundle manifest expose this revision so source, prompt, and benchmark evidence can be frozen together.
 
 The current feature-by-feature parity inventory is maintained in
 [`CINDY_FEATURE_PARITY.md`](CINDY_FEATURE_PARITY.md).
@@ -18,7 +18,7 @@ For ordinary users, the recommended workflow is one command from a clean,
 committed Cindy checkout:
 
 ```powershell
-pnpm --filter cindy-headless package:upload
+pnpm --filter cindy-headless package:release
 ```
 
 It builds the Linux x64 bundle, verifies it, creates the self-contained `full`
@@ -48,7 +48,14 @@ uv run harbor eval execute <freeze-id> --workspace-root . --approve
 
 The bundle directory is useful for local development and direct Harbor work.
 For web upload, use the verified `full` release archive produced by
-`package:upload`.
+`package:release`.
+
+`package:public-runtime` is a separate public-distribution workflow. It creates
+only `cindy-headless-linux-x64-public-runtime-no-vendor-<version>.tar.gz`, which
+does not contain the Claude Code, Codex, or Pi harness binaries. It is not the
+default upload package and must be used only when a no-vendor artifact is
+explicitly requested. The low-level `package:full` command exists for release
+pipeline diagnostics; ordinary formal delivery should use `package:release`.
 
 ## Layout
 

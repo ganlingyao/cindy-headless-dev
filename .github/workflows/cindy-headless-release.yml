@@ -71,18 +71,18 @@ jobs:
       - name: Verify portable distribution
         run: npm --prefix apps/cindy-headless run test:distribution
 
-      - name: Build public runtime package
+      - name: Build public no-vendor runtime package
         run: |
-          npm --prefix apps/cindy-headless run package:runtime
+          npm --prefix apps/cindy-headless run package:public-runtime
           cd apps/cindy-headless/release
           sha256sum --check SHA256SUMS
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: cindy-headless-linux-x64-runtime
+          name: cindy-headless-public-runtime-no-vendor-binaries
           path: |
-            apps/cindy-headless/release/cindy-headless-linux-x64-runtime-*.tar.gz
+            apps/cindy-headless/release/cindy-headless-linux-x64-public-runtime-no-vendor-*.tar.gz
             apps/cindy-headless/release/SHA256SUMS
             apps/cindy-headless/release/bundle-manifest.json
             apps/cindy-headless/release/release-manifest.json

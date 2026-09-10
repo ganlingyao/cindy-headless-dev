@@ -35,10 +35,12 @@ async function digestTree(directory) {
 
 const release = JSON.parse(await readFile(path.join(releaseDir, 'release-manifest.json'), 'utf8'));
 assert.equal(release.product, 'cindy-headless');
+assert.equal(release.packageMode, 'full');
 assert.match(release.cindyUpstreamCommit, /^[0-9a-f]{40}$/);
 assert.equal(release.includesVendorBinaries, true, 'release manifest must identify the vendor binaries');
 const fullAsset = release.assets.find((asset) => /-full-/.test(asset));
 assert.ok(fullAsset, 'release manifest does not list a full package');
+assert.deepEqual(release.assets, [fullAsset], 'full release directory must contain only the upload-ready full package');
 
 const sums = new Map();
 for (const line of (await readFile(path.join(releaseDir, 'SHA256SUMS'), 'utf8')).trim().split('\n')) {
